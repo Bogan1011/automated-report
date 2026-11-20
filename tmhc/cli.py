@@ -80,7 +80,17 @@ def _date(value) -> dt.date | None:
         return None
 
 
+def _require(path: Path, profile_key: str) -> None:
+    if not path.exists():
+        here = path.parent
+        nearby = sorted(p.name for p in here.iterdir()) if here.is_dir() else []
+        hint = f"\n  files in {here}: {', '.join(nearby) or '(none)'}" if here.is_dir() else \
+               f"\n  folder {here} does not exist"
+        raise SystemExit(f"\nFile not found: {path}\n  check `{profile_key}` in profile.yaml{hint}")
+
+
 def _unpack_logs(path: Path, password: str) -> tuple[Path, Path | None]:
+    _require(path, "evidence: logs")
     if path.is_dir():
         return path, None
     tmp = Path(tempfile.mkdtemp(prefix="tmhc_logs_"))
@@ -89,7 +99,12 @@ def _unpack_logs(path: Path, password: str) -> tuple[Path, Path | None]:
             target = (tmp / member.filename).resolve()
             if not str(target).startswith(str(tmp.resolve())):
                 raise SystemExit(f"refusing unsafe path in zip: {member.filename}")
-        z.extractall(tmp, pwd=password.encode() if password else None)
+        try:
+            z.extractall(tmp, pwd=password.encode() if password else None)
+        except RuntimeError as exc:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise SystemExit(f"\nCannot open {path.name}: {exc}\n  check `evidence: zip_password` "
+                             "in profile.yaml") from None
     return tmp, tmp
 
 
@@ -179,6 +194,7 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
     reader_kind = str(opts.get("reader", "none")).lower()
     min_conf = float(opts.get("min_confidence", 0.6))
     if ev.get("screenshots_docx") and reader_kind != "none" and not offline:
+        _require(base / ev["screenshots_docx"], "evidence: screenshots_docx")
         covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
         reader = screenshots.make_reader(opts)
         screenshots.run(base / ev["screenshots_docx"], rules, cache_path, covered_keys=covered,
