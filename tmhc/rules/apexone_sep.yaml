@@ -1,0 +1,324 @@
+# ---------------------------------------------------------------------------
+# Rule pack: Trend Micro Standard Endpoint Protection (Apex One) health check
+#
+# Each row says WHAT to show (component + Trend recommended text), WHERE the
+# deployed value comes from (fact `key`), HOW to judge it (`check`), and WHAT
+# to say when it fails (`gap`). Edit this file to change the baseline; no
+# code changes are needed.
+#
+# check types
+#   enabled            value is truthy (tuples: every element truthy)
+#   disabled           value is falsy
+#   first_enabled      first element of a (desktop, server) tuple is truthy
+#   equals: X          value or display equals X (case-insensitive)
+#   in: [X, Y]         value or display is one of the list
+#   contains: X        display contains X
+#   lte: N / gte: N    numeric compare on value
+#   zero               value == 0
+#   configured         display starts with "Configured"
+#   info               always rendered with the Info icon (no judgement)
+#   date_future        value is an ISO date later than the check date
+#   offline_ratio: F   (online, offline) tuple with offline share <= F
+#   seats_cover        license seat count >= deployed agents
+#
+# status words: good | concern | critical | info | unknown
+# `pass` defaults to good, `fail` defaults to concern.
+# A row whose fact is missing renders "Not captured" with the Unknown icon.
+#
+# gap text placeholders: {deployed} (the row's deployed text) and
+# {m.<metric>} (any metric from the agent list, e.g. {m.offline}).
+# ---------------------------------------------------------------------------
+
+meta:
+  product: Standard Endpoint Protection
+  short: SEP
+
+# ===========================================================================
+# 1. Apex One server / global settings  (screenshots + agent list)
+# ===========================================================================
+server:
+  title: Apex One Health Check Overview
+  groups:
+    - heading: Configuration Health – Overview
+      rows:
+        - component: License
+          recommended: Within term
+          key: license.expiry
+          check: date_future
+          fail: critical
+          gap: "The license has expired or expiry could not be confirmed ({deployed}). Renew the license to keep receiving pattern and engine updates."
+        - component: Deployed Agents
+          recommended: "Purchased Seat count - {m.license_seats}"
+          key: inventory.deployed_agents
+          check: seats_cover
+          gap: "Deployed agents ({m.deployed_agents}) exceed the purchased seat count ({m.license_seats}). Review license usage."
+        - component: Apex One Agent Build
+          recommended: "Latest: {m.latest_build}"
+          key: inventory.outdated_agents
+          display_key: inventory.agent_build
+          check: zero
+          gap: "{m.outdated_agents} Agents have outdated Program versions. Keep all agent program versions updated. Latest version is {m.latest_build}."
+        - component: Online/Offline Agents
+          recommended: Healthy ratio at time of check day
+          key: inventory.online_offline
+          check: {offline_ratio: 0.05}
+          gap: "{m.offline} agents are showing offline, recommended verify the agent service is running on the endpoint. Check the network connectivity of the agents with the server."
+        - component: Outdated Agents
+          recommended: Check (N-3)
+          key: inventory.builds_behind_n3
+          check: zero
+          gap: null   # covered by the build gap above
+        - component: Endpoints pending restart
+          recommended: "0"
+          key: inventory.restart_required
+          check: zero
+          show: false   # gap only, not a table row (matches the Oct 2026 layout)
+          gap: "{m.restart_required} endpoint is required to restart for the update. Apex One Agents may need to reboot for engine updates. Recommend restarting those endpoints."
+        - component: Server OS agents
+          recommended: "Use Server & Workload Protection"
+          key: inventory.server_agents
+          check: zero
+          show: false
+          gap: "{m.server_agents} agents are installed on Windows server platform recommended to use Server & Workload Protection for the advanced protection for servers."
+        - component: Smart scan pattern age
+          recommended: "Within 7 days"
+          key: inventory.stale_pattern_agents
+          check: zero
+          show: false
+          gap: "{m.stale_pattern_agents} Agents have smart scan patterns versions older than 7 days, recommended to keep all patterns up to date."
+        - component: Supported OS
+          recommended: ""
+          key: _always
+          check: info
+          show: false
+          gap: "Please ensure that endpoints are running supported OS versions for the Apex One/Endpoint Security agent. For more information, refer to the relevant Trend Micro KB article. https://success.trendmicro.com/en-US/solution/KA-0002157"
+          gap_always: true
+
+    - heading: Global Agent Setting ->Security Settings
+      rows:
+        - {component: Exclude Microsoft Exchange server folders and files from scans, recommended: Enable, key: global.exclude_exchange, check: enabled}
+        - {component: Enable deferred scanning on file operations, recommended: Enable, key: global.deferred_scanning, check: enabled, fail: info}
+        - {component: Enable Early Launch Anti-Malware Protection on endpoints, recommended: Enable, key: global.elam, check: enabled,
+           gap: "Early Launch Anti-Malware protection is disabled, recommended to enable it so that the agent can check boot drivers before they load."}
+    - heading: Virus/Malware Scan Settings Only
+      rows:
+        - {component: Clean/Delete infected files within compressed files, recommended: Enable, key: global.clean_compressed, check: enabled}
+    - heading: Spyware/Grayware Scan Settings Only
+      rows:
+        - {component: Scan for cookies, recommended: Enable, key: global.scan_cookies, check: enabled,
+           gap: "Scan for Cookies and Count cookie into spyware log under Global agent settings is disabled, recommended to enable it to scan cookies for spyware/grayware and to include logs of scanned cookies that are found to be spyware."}
+        - {component: Count cookie into spyware log, recommended: Enable, key: global.count_cookie, check: enabled, gap_merge_with: global.scan_cookies}
+    - heading: Firewall Settings
+      rows:
+        - {component: Enable the Apex One Firewall, recommended: Enable, key: global.firewall_enabled, check: enabled, fail: info}
+        - {component: Send firewall logs to the server every, recommended: 4 hours, key: global.firewall_log_interval, check: {equals: 4 hours}, fail: info}
+        - {component: Update the Apex One Firewall driver only after a system restart, recommended: Enable, key: global.firewall_driver_restart, check: enabled, fail: info}
+        - {component: Send firewall log count information to the Apex One server hourly to determine the possibility of a firewall outbreak., recommended: Enable, key: global.firewall_log_count, check: enabled, fail: info}
+    - heading: Behavior Monitoring Settings
+      rows:
+        - {component: Automatically take action if the user does not respond within, recommended: 30 seconds, key: global.bm_response_timeout, check: {equals: 30 seconds}}
+    - heading: SYSTEM>Certified Safe Software Service Settings
+      rows:
+        - {component: "Enable the Certified Safe Software Service for Behavior Monitoring, Firewall, and antivirus scans", recommended: Enable, key: global.certified_safe_software, check: enabled}
+        - {component: Smart Protection Service Proxy>Use configured Smart Protection Sources for service queries, recommended: Enable, key: global.sps_proxy, check: enabled, fail: info}
+    - heading: Services Restart
+      rows:
+        - {component: Automatically restart any Security Agent service if the service terminates unexpectedly>Restart the service, recommended: 1 minute, key: global.service_restart_after, check: {equals: 1 minute}}
+        - {component: "If the first attempt to restart the service is unsuccessful, retry", recommended: 2 times, key: global.service_restart_retries, check: {equals: 2 times}, pass: info}
+        - {component: Reset the unsuccessful restart count after, recommended: 1 hour, key: global.service_restart_reset, check: {equals: 1 hour}, pass: info}
+    - heading: NETWORK>Virus/Malware Log Bandwidth Settings
+      rows:
+        - {component: Enable the Security Agent to create a single virus/malware log entry for recurring detections of the same virus/malware within an hour, recommended: Enable, key: global.single_log_entry, check: enabled}
+        - {component: Server Polling Interval>Security Agents poll the server for updated settings and components and send status updates at the specified interval., recommended: 10 minutes, key: global.polling_interval, check: {equals: 10 minutes}}
+    - heading: AGENT CONTROL
+      rows:
+        - {component: General Settings>Add Manual Scan to the Windows shortcut menu on endpoints, recommended: Enable, key: global.manual_scan_shortcut, check: enabled, fail: info}
+        - {component: Alert Settings>Show the alert icon on the Windows taskbar if the virus pattern file is not updated after, recommended: Enable, key: global.pattern_alert_icon, check: enabled,
+           gap: "Show the alert icon on the Windows taskbar if the virus pattern file is not updated is disabled, recommended to enable it to remind users to update a Virus Pattern that has not been updated within the specified number of days."}
+        - {component: Display a notification message if the endpoint needs to restart to load a kernel mode driver, recommended: Enable, key: global.restart_notification, check: enabled}
+        - {component: Agent Language Configuration, recommended: Local language settings on the endpoint, key: global.agent_language, check: info}
+    - heading: Update Settings
+      rows:
+        - {component: Agent Automatic Updates>scheduled based update, recommended: 12 hours, key: global.agent_update_schedule, check: {in: ["12 hours", "every 12 hours", "hourly", "1 hour", "every hour"]},
+           gap: "Agent automatic update is configured as {deployed}. It is recommended to configure updates every 12 hours to ensure timely protection against emerging threats."}
+        - {component: Agent Update Source (update agent is in use), recommended: As per Customer requirement, key: global.agent_update_source, check: info, pass: good}
+        - {component: "Update Agents update components, domain settings, and agent programs and hot fixes, only from the Apex One server", recommended: Enable, key: global.ua_only_from_server, check: enabled, fail: info}
+        - {component: Components, recommended: Enable, key: global.ua_components, check: enabled, fail: info}
+        - {component: Domain settings, recommended: Enable, key: global.ua_domain_settings, check: enabled, fail: info}
+        - {component: Security Agent programs and hot fixes, recommended: Enable, key: global.ua_programs, check: enabled, fail: info}
+        - {component: Smart Protection Sources, recommended: Enable, key: global.smart_protection_sources, check: enabled}
+        - {component: Web Reputation service/File Reputation service, recommended: Enable, key: global.wrs_frs_sources, check: enabled, fail: info}
+        - {component: Smart Protection Feedback, recommended: Enable, key: global.smart_protection_feedback, check: enabled}
+        - {component: Suspicious Object List Settings (Apex One is subscribed to the Suspicious Object lists on the registered Apex Central server), recommended: Subscribe, key: global.so_subscribed, check: enabled}
+        - {component: Agent Setting Enable Suspicious URL list Enable Suspicious IP list Enable Suspicious File list Enable Suspicious Domain list, recommended: Enable, key: global.so_lists_enabled, check: enabled}
+        - {component: "Update the Suspicious Object lists on Security Agents:", recommended: Automatically after updating the Suspicious Object lists on the server, key: global.so_auto_update, check: enabled}
+
+# ===========================================================================
+# 2. Standard Endpoint Protection console + policy  (screenshots + .cmpolicy)
+# ===========================================================================
+policy:
+  title: Standard Endpoint Protection Policy Review
+  groups:
+    - heading: Configuration Health – Review
+      rows:
+        - {component: License, recommended: Within term, key: license.expiry, check: date_future, fail: critical, gap: null}
+    - heading: "Administration:"
+      scope: server
+      rows:
+        - {component: Schedule Update, sub: Download Schedule, recommended: 1 hour, key: admin.schedule_update, check: {in: ["1 hour", "hourly", "every hour", "every 1 hour"]},
+           gap: "Component Scheduled Update in Standard Endpoint Protection is configured in {deployed}, recommended to configure Every Hour to keep the components up to date."}
+        - {component: Schedule Update, sub: Deployment Plan, recommended: immediately, key: admin.deployment_plan, check: {contains: immediate}}
+        - {component: Active Directory and Compliance Settings, recommended: Enable Active Directory synchronization, key: admin.ad_sync, check: enabled, fail: info}
+        - {component: Syslog Settings, recommended: Enable Syslog forwarding, key: admin.syslog, check: enabled, fail: info}
+        - {component: Event Notifications, recommended: Enable ( Advanced Threat Activity & Known threat activity), key: admin.event_notifications, check: {equals: Enabled}, fail: info,
+           gap: "In Standard Endpoint Protection Event Notifications are {deployed}, recommended to enable all notifications for Advanced Threat Activity & Known threat activity."}
+        - {component: Inactive Agents Automatically remove agents if inactive, recommended: 30 Days, key: admin.inactive_agent_removal, check: enabled}
+        - {component: Suspicious Object Sync Managed Products, recommended: Send suspicious objects to managed products, key: admin.so_sync, check: enabled}
+
+    - heading: "{policy_name} - Policy Review"
+      rows:
+        - {component: No.of Policies, recommended: "", key: admin.policy_count, check: info}
+        - {component: Agent Scan Method, recommended: Smart Scan, key: policy.scan_method, check: {equals: smart}}
+        - {component: Dynamic intelligence Mode, recommended: Enable, key: policy.dynamic_intelligence_mode, check: enabled,
+           gap: "Dynamic Intelligence Mode is disabled. It is recommended to enable this feature so the agent can automatically adjust monitoring levels and optimize security responses based on detected threats, user behavior, and system activity."}
+        - {component: Monitoring Level, recommended: Detection-2 (Moderate) Prevention-2 ( Moderate), key: policy.monitoring_level, check: {contains: "Detection-2"}, pass: info}
+
+  # The four scan blocks share one template; `{p}` is replaced with the
+  # fact prefix and rows tagged `only:` are emitted for those blocks only.
+  scan_blocks:
+    - {title: Real Time Scan, prefix: policy.realtime, name: Real-Time}
+    - {title: Scheduled Scan, prefix: policy.scheduled, name: Scheduled}
+    - {title: Manual Scan Settings, prefix: policy.manual, name: Manual}
+    - {title: Scan now settings, prefix: policy.scannow, name: Scan Now}
+
+  scan_template:
+    - {component: Enable virus/malware scan, recommended: Enable, key: "{p}.virus_scan", check: enabled, skip: [policy.manual]}
+    - {component: Enable spyware/grayware scan, recommended: Enable, key: "{p}.spyware_scan", check: enabled, skip: [policy.manual]}
+    - {group: Target, component: "", recommended: "Scan files being: created /modified /retrieved", key: "{p}.scan_on", check: {contains: retrieved}, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Schedule: Weekly", key: "{p}.schedule", check: {in: [weekly, daily]}, only: [policy.scheduled]}
+    - {group: Target, component: "", recommended: "Files to scan:  All Scannable Files", key: "{p}.files_to_scan", check: {equals: all},
+       gap: "In {name} Settings, files to scan are set as {deployed}, recommended to set it as All Scannable files because IntelliScan only scans files known to potentially harbor malicious code."}
+    - {group: Target, component: "", recommended: "Scan hidden folders: Enabled", key: "{p}.scan_hidden", check: enabled, only: [policy.manual]}
+    - {group: Target, component: "", recommended: "Scan floppy disks during shutdown", key: "{p}.scan_floppy_shutdown", check: info, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Scan the boot sector of the USB storage device after plugging in:  Enable", key: "{p}.usb_boot_scan", check: enabled, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Scan all files in removable storage device after plugging in: Enable", key: "{p}.usb_all_files_scan", check: enabled, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Quarantine malware variants detected in memory: Enable", key: "{p}.quarantine_memory_variants", check: enabled, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Scan OLE objects: Enable Maximum layers: 3", key: "{p}.ole_scan", check: enabled}
+    - {group: Target, component: "", recommended: "Detect exploit code in OLE file: Enable", key: "{p}.ole_exploit", check: enabled}
+    - {group: Target, component: "", recommended: "Scan compressed files: Enable Maximum layers: 6", key: "{p}.compressed_scan", check: enabled, pass: info}
+    - {group: Target, component: "", recommended: "Do not scan files if the compressed file size exceeds: 30 MB", key: "{p}.compressed_max_size", check: info}
+    - {group: Target, component: "", recommended: "In a compressed file, scan only the first: 100 files", key: "{p}.compressed_file_count", check: info}
+    - {group: Target, component: "", recommended: "IntelliTrap: Enable", key: "{p}.intellitrap", check: enabled, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Enable CVE exploit scanning for files downloaded through web and email channels : Enable", key: "{p}.cve_exploit_scan", check: enabled, only: [policy.realtime]}
+    - {group: Target, component: "", recommended: "Automatically stop Scheduled Scan when scanning lasts more than (x hours): Disable", key: "{p}.auto_stop", check: disabled, fail: info, only: [policy.scheduled]}
+    - {group: Target, component: "", recommended: "Skip Scheduled Scan when a wireless endpoint's battery life is less than (20%)", key: "{p}.skip_on_battery", check: info, only: [policy.scheduled]}
+    - {group: Target, component: "", recommended: "Resume an interrupted Scheduled Scan", key: "{p}.resume_interrupted", check: enabled, only: [policy.scheduled],
+       gap: "In Scheduled Scan Settings, resume an interrupted Scheduled Scan is disabled, recommended to enable it to continue the scheduled scan the next day."}
+    - {group: Target, component: "", recommended: "Resume a missed Scheduled Scan", key: "{p}.resume_missed", check: enabled, only: [policy.scheduled]}
+    - {group: Target, component: "", recommended: "Virus/Malware Scan Settings Only: Scan boot area", key: "{p}.scan_boot", check: enabled, skip: [policy.realtime]}
+    - {group: Target, component: "", recommended: "CPU Usage: Medium (Pause between file scan if CPU consumption is higher than 50%, and do not pause if 50% or lower)", key: "{p}.cpu_usage", check: {equals: Medium}, skip: [policy.realtime]}
+    - {group: Action, component: "", recommended: "Virus/Malware: Use specific action (Quarantine / Clean & Quarantine per threat type)", key: "{p}.action_mode", check: {equals: specific},
+       gap: "In {name} Settings, ActiveAction is used for virus/malware, recommended to use specific actions (Clean & Quarantine) per threat type."}
+    - {group: Action, component: "", recommended: "Display a notification message on the endpoint when virus/malware is detected: Enable", key: "{p}.notify_virus", check: enabled, pass: info, skip: [policy.manual, policy.scannow]}
+    - {group: Action, component: "", recommended: "Display a notification message on the endpoint when probable virus/malware is detected: Enable", key: "{p}.notify_probable", check: enabled, pass: info, only: [policy.realtime]}
+    - {group: Action, component: "", recommended: "Backup files before cleaning: Enable", key: "{p}.backup_before_clean", check: enabled}
+    - {group: Action, component: "", recommended: "Damage Cleanup Services Clean type: Advance Cleanup", key: "{p}.clean_type", check: {equals: Advance Cleanup}, skip: [policy.realtime]}
+    - {group: Action, component: "", recommended: "Run cleanup when probable virus/malware is detected: Enable", key: "{p}.cleanup_probable", check: enabled}
+    - {group: Action, component: "", recommended: "Display a notification message on the endpoint when spyware/grayware is detected: Enable", key: "{p}.notify_spyware", check: enabled, pass: info, only: [policy.realtime, policy.scheduled]}
+    - {group: Action, component: "", recommended: "Advanced Malware Detection : Use the same action for all portable executable files with threats ( quarantine)", key: "{p}.advanced_malware_detection", check: {equals: customised},
+       gap_shared: advanced_malware_detection}
+    - {group: Scan Exclusions ( refer to section 4.2.4 for exclusion recommendation), component: "", recommended: "Enable scan exclusion", key: "{p}.exclusion_enabled", check: enabled}
+    - {group: Scan Exclusions ( refer to section 4.2.4 for exclusion recommendation), component: "", recommended: "Exclude directories where Trend Micro products are installed: Enable", key: "{p}.exclude_trend_dirs", check: enabled}
+    - {group: Scan Exclusions ( refer to section 4.2.4 for exclusion recommendation), component: "", recommended: "Scan Exclusion List (Files + Files Extensions) : Configure as per applications", key: "{p}.exclusion_list", check: info}
+
+  # gaps raised once across all scan blocks
+  shared_gaps:
+    advanced_malware_detection: "In {blocks} Settings, Advanced malware Detection is configured as ActiveAction recommended to configure as same action for all with Quarantine action."
+
+  tail_groups:
+    - heading: Behavior Monitoring
+      rows:
+        - {group: Rules, recommended: "Malware Behavior Blocking: Enable", key: policy.bm.malware_behaviour_blocking, check: enabled, fail: critical}
+        - {group: Rules, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.monitoring_level, check: {contains: Detection-2}}
+        - {group: Rules, recommended: "Threats to block: Known and potential threats", key: policy.bm.threats_to_block, check: {contains: potential}}
+        - {group: Rules, recommended: "Protect documents against unauthorized encryption or modification: Enable", key: policy.bm.protect_documents, check: enabled, fail: critical,
+           gap: "Ransomware document protection is disabled in Behaviour Monitoring, recommended to enable it to protect documents against unauthorized encryption or modification."}
+        - {group: Rules, recommended: "Automatically backup and restore files changed by suspicious programs: Enable", key: policy.bm.backup_restore_files, check: enabled}
+        - {group: Rules, recommended: "Block processes commonly associated with ransomware: Enable", key: policy.bm.block_ransomware_processes, check: enabled}
+        - {group: Rules, recommended: "Program inspection to detect and block compromised executable files: Enable", key: policy.bm.program_inspection, check: enabled}
+        - {group: Rules, recommended: "Anti-exploit Protection- Terminate programs that exhibit abnormal behavior associated with exploit attacks: Enable", key: policy.bm.anti_exploit, check: enabled}
+        - {group: Rules, recommended: "Monitor newly encountered programs downloaded through HTTP or email applications: Enable - Prompt user", key: policy.bm.newly_encountered, check: enabled, pass: info}
+        - {group: Rules, recommended: "Event Monitoring: Enable assess mode in policies ( review the logs periodically & fine tune accordingly)", key: policy.bm.event_monitoring, check: enabled,
+           gap: "In Behaviour Monitoring, Event Monitoring is disabled and recommended to enable it. Event Monitoring provides a more generic approach to protecting against unauthorized software and malware attacks. It monitors system areas for certain changes, and allows administrators to regulate programs that cause such changes."}
+        - {component: Exceptions, recommended: Review, key: policy.bm.exceptions, check: info}
+    - heading: Predictive Machine Learning
+      rows:
+        - {group: Detection Settings, recommended: "PML : Enable", key: policy.pml.enabled, check: enabled, fail: critical,
+           gap: "Predictive Machine Learning is disabled, recommended to enable it to detect unknown and zero-day threats."}
+        - {group: Detection Settings, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.pml.monitoring_level, check: {contains: Detection-2}}
+        - {group: Detection Settings, recommended: "File : Enable-Quarantine", key: policy.pml.file_action, check: {contains: Quarantine}}
+        - {group: Detection Settings, recommended: "Process : Enable-Terminate", key: policy.pml.process_action, check: {contains: Terminate}}
+        - {component: Exceptions, recommended: Review, key: policy.pml.exceptions, check: info}
+    - heading: Web Reputation
+      rows:
+        - {group: Internal Agents & External, recommended: "Web Reputation on operating system: Enable", key: policy.wr.enabled, check: first_enabled, fail: critical}
+        - {group: Internal Agents & External, recommended: "Query Setting - Enable assessment mode : Disable", key: policy.wr.assessment_mode, check: disabled}
+        - {group: Internal Agents & External, recommended: "Check HTTPS URLs: Enable", key: policy.wr.check_https, check: enabled,
+           gap: "In Web Reputation, Check HTTPS URLs is disabled for {f.policy.wr.check_https_off_for}. Recommend enabling it to reduce exposure to compromised and malicious websites that use HTTPS."}
+        - {group: Internal Agents & External, recommended: "Send queries to Smart Protection Servers : Enable", key: policy.wr.query_sps, check: enabled, fail: info}
+        - {group: Internal Agents & External, recommended: "Security Level: Medium.", key: policy.wr.security_level, check: {in: [Medium, High]}}
+        - {group: Internal Agents & External, recommended: "Browser Exploit Prevention Block pages containing malicious script : Enable", key: policy.wr.browser_exploit_prevention, check: enabled}
+        - {group: Internal Agents & External, recommended: "Approved/Blocked URL: configured ( add all internal URL in approved list)", key: policy.wr.approved_blocked_urls, check: info}
+        - {group: Internal Agents & External, recommended: "Allow agents to send logs to Apex One Server: Enable", key: policy.wr.send_logs, check: enabled}
+    - heading: Suspicious Connection
+      rows:
+        - {group: Suspicious Connection, recommended: "Detect network connections made to addresses in the Global C&C IP list: Enable - Block", key: policy.sc.global_cc_list, check: {contains: "Enabled - Block"}}
+        - {group: Suspicious Connection, recommended: "Detect connections using malware network fingerprinting: Enable-Block", key: policy.sc.network_fingerprinting, check: {contains: "Enabled - Block"}}
+        - {group: Suspicious Connection, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.sc.monitoring_level, check: {contains: Detection-2}}
+        - {group: Suspicious Connection, recommended: "Clean suspicious connections when C&C callback is detected: Enable", key: policy.sc.clean_on_cc, check: enabled}
+    - heading: Vulnerability Protection
+      rows:
+        - {component: Vulnerability Protection, recommended: Enable, key: policy.vp.enabled, check: enabled, fail: critical,
+           gap: "Vulnerability Protection is disabled. It is recommended to enable it to apply virtual patches and recommended Intrusion Prevention rules, helping protect endpoints against vulnerabilities before official patches are applied."}
+        - {component: Profile, recommended: Recommended, key: policy.vp.profile, check: info}
+        - {component: Network Engine Settings, recommended: "Network Engine Detection Mode : Inline", key: policy.vp.network_engine_mode, check: info}
+    - heading: Device Control
+      rows:
+        - {group: Device Control for Internal & External Agents, recommended: "Device Control: Enable for both External and Internal Agents", key: policy.dc.enabled, check: enabled,
+           gap: "Device Control is disabled, recommended to enable it to regulate access to USB storage and other external devices."}
+        - {group: Device Control for Internal & External Agents, recommended: "Block the Autorun Function on USB Storage Devices: Enable", key: policy.dc.block_autorun, check: enabled}
+        - {group: Device Control for Internal & External Agents, recommended: "Approved USB Storage Devices List: Configured", key: policy.dc.approved_usb_list, check: info}
+    - heading: Application Control
+      rows:
+        - {component: Enable Application Control, recommended: Enable, key: policy.ac.enabled, check: enabled,
+           gap: "Application Control is disabled. Recommend enabling it to prevent unauthorized application usage, ensure only approved applications can run on endpoints, and reduce security risks from untrusted software."}
+        - {component: User Defined Rules, recommended: "Block Grey software list Allow MS update/net/app Allow TrendMicro (refer section 4.2.5)", key: policy.ac.rules, check: info}
+        - {component: Additional Actions, recommended: "Lockdown: Block all applications not identified during the last inventory scan. Enable Assessment mode ( review & allow/block rules as per requirement)", key: policy.ac.lockdown, check: info}
+        - {group: Log Maintenance, recommended: "Maximum log age (in days) :30 Days", key: policy.ac.max_log_age, check: info}
+        - {group: Log Maintenance, recommended: "Maximum number of logs a Security Agent can send each hour per criteria :10", key: policy.ac.max_logs_per_hour, check: info}
+    - heading: EXCEPTION
+      rows:
+        - {component: Exception Lists, recommended: Review, key: policy.exceptions.trusted_programs, check: info}
+        - {component: Spyware/Grayware Approved List, recommended: Review, key: policy.exceptions.spyware_approved_list, check: info}
+    - heading: Update AGENT CONFIGURATIONS
+      rows:
+        - {component: Update Agent ( configure separate  policy for update agent), recommended: "Component updates: Enable Domain settings: Enable Security Agent programs and hot fixes : Enable", key: policy.update_agent.configured, check: info}
+    - heading: Privileges & Other Settings
+      rows:
+        - {group: Scan, recommended: "Configure Manual Scan settings: Disable", key: policy.priv.configure_manual_scan, check: disabled}
+        - {group: Scan, recommended: "Configure Real-time Scan settings: Disable", key: policy.priv.configure_realtime_scan, check: disabled,
+           gap: "Users are allowed to configure Real-time Scan settings on the agent, recommended to remove this privilege."}
+        - {group: Scan, recommended: "Configure Scheduled Scan settings: Disable", key: policy.priv.configure_scheduled_scan, check: disabled}
+        - {group: Component Updates, recommended: "Enable/Disable schedule-based updates : Disable", key: policy.priv.toggle_scheduled_updates, check: disabled}
+        - {component: Agent Unload and Unlock, recommended: Set a Complex password, key: policy.priv.unload_password, check: enabled, fail: critical,
+           gap: "Users can unload the Security Agent without a password, recommended to require a complex password."}
+        - {component: Agent uninstallation, recommended: Set a Complex password, key: policy.priv.uninstall_password, check: enabled, fail: critical,
+           gap: "Users can uninstall the Security Agent without a password, recommended to require a complex password."}
+        - {group: Update Settings, recommended: "Security Agents download updates from the Trend Micro Active Update Server: Enable", key: policy.priv.update_from_activeupdate, check: enabled}
+    - heading: ADDITIONAL SERVICE SETTINGS
+      rows:
+        - {component: Unauthorized Change Prevention Service, recommended: "Windows desktops : Enable Windows Server platforms( performance mode ) : Enable", key: policy.svc.unauthorized_change_prevention, check: enabled}
+        - {component: Firewall, recommended: "Windows desktops : Enable Windows Server platforms : Optional", key: policy.svc.firewall, check: first_enabled}
+        - {component: Suspicious Connection Service, recommended: "Windows desktops : Enable Windows Server platforms: Optional", key: policy.svc.suspicious_connection, check: first_enabled}
+        - {component: Data Protection Service, recommended: "Windows desktops: Enable Windows Server platforms: Optional", key: policy.svc.data_protection, check: first_enabled}
+        - {component: Advanced Protection Service, recommended: "Windows desktops : Enable Windows Server platforms : Enable", key: policy.svc.advanced_protection, check: enabled}

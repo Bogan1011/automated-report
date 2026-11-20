@@ -1,0 +1,31 @@
+# Client profile for one health check. Paths are relative to this file.
+client_name: Acme Industries Private Limited
+product: Standard Endpoint Protection
+quarter: Q4 2026
+check_date: 2026-10-07        # day of the Teams session (YYYY-MM-DD)
+report_date: 2026-10-28       # printed on the cover (YYYY-MM-DD)
+prepared_by: Your Name
+approved_by: Approver Name
+account_owner: Account Owner
+location: Remotely
+customer_attendance: Console Access
+trend_attendance: Your Name
+
+evidence:
+  screenshots_docx: evidence/Acme_SEP_SS.docx   # Word file of console screenshots
+  logs: evidence/Acme_SEP_Logs.zip              # folder or zip of CSV / .cmpolicy exports
+  zip_password: ""                              # if the zip is protected
+
+options:
+  rules: apexone_sep               # rule pack in tmhc/rules/
+  stale_pattern_releases: 12       # ~7 days of smart-scan pattern releases
+  min_confidence: 0.6              # ignore screenshot readings below this
+  model: claude-sonnet-5-5         # vision model for screenshots
+  skip_covered: true               # don't read screenshots for settings the .cmpolicy proves
+
+# Values you confirmed in the session but have no screenshot or export for.
+# They override everything else and are labelled "Analyst entry" in the
+# review workbook.
+manual_facts: {}
+#  global.scan_cookies: {value: false, display: Disabled}
+#  global.pattern_alert_icon: {value: false, display: Disabled}

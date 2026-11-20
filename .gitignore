@@ -1,0 +1,17 @@
+# --- customer data must never be committed ---
+clients/
+output/
+evidence/
+*.cmpolicy
+*.csv
+*.zip
+screenshot_cache.json
+*.docx
+*.xlsx
+!tmhc/render/templates/*.docx
+# --- python ---
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
