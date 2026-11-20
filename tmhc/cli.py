@@ -1,9 +1,14 @@
 """Command-line entry point.
 
-    python -m tmhc init  clients/acme/profile.yaml      # write a starter profile
-    python -m tmhc run   clients/acme/profile.yaml      # build the report
-    python -m tmhc run   clients/acme/profile.yaml --dry-run   # show what would be read
-    python -m tmhc run   clients/acme/profile.yaml --offline   # cache + exports only, no API
+    python -m tmhc init       clients/acme/profile.yaml   # write a starter profile
+    python -m tmhc checklist  clients/acme/profile.yaml   # Excel checklist (no AI)
+    python -m tmhc run        clients/acme/profile.yaml   # build the report
+    python -m tmhc run        clients/acme/profile.yaml --dry-run    # what would be read
+    python -m tmhc run        clients/acme/profile.yaml --offline    # cache/checklist only
+
+Everything runs on this machine. Screenshots are read by a local model
+(Ollama) or not at all; the cloud reader exists but is refused unless the
+profile sets ``allow_cloud: true``.
 """
 from __future__ import annotations
 
@@ -17,7 +22,8 @@ from pathlib import Path
 
 import yaml
 
-from .engine.evaluate import load_rules, evaluate, status_counts
+from . import checklist
+from .engine.evaluate import evaluate, load_rules, status_counts
 from .models import Fact, HealthCheck, Source
 from .render.docx_report import DEFAULT_TEMPLATE, render
 from .render.review import write_review
@@ -41,20 +47,27 @@ evidence:
   screenshots_docx: evidence/Acme_SEP_SS.docx   # Word file of console screenshots
   logs: evidence/Acme_SEP_Logs.zip              # folder or zip of CSV / .cmpolicy exports
   zip_password: ""                              # if the zip is protected
+  checklist: checklist.xlsx                     # created by `python -m tmhc checklist`
 
 options:
-  rules: apexone_sep               # rule pack in tmhc/rules/
+  rules: apexone_sep
   stale_pattern_releases: 12       # ~7 days of smart-scan pattern releases
   min_confidence: 0.6              # ignore screenshot readings below this
-  model: claude-sonnet-5-5         # vision model for screenshots
-  skip_covered: true               # don't read screenshots for settings the .cmpolicy proves
+  skip_covered: true               # don't read screenshots for settings the exports prove
 
-# Values you confirmed in the session but have no screenshot or export for.
-# They override everything else and are labelled "Analyst entry" in the
-# review workbook.
+  # How screenshots are read. Nothing leaves this machine unless you choose 'cloud'.
+  #   none  - don't read screenshots; use the checklist (works on any laptop)
+  #   local - vision model in Ollama on this machine (needs a decent GPU)
+  #   cloud - Anthropic API; ALSO needs allow_cloud: true
+  reader: none
+  local_model: qwen2.5vl:7b        # qwen2.5vl:3b for smaller GPUs
+  ollama_host: http://127.0.0.1:11434
+  allow_cloud: false
+
+# Values you confirmed in the session but have no screenshot, export or
+# checklist entry for. They override everything else.
 manual_facts: {}
 #  global.scan_cookies: {value: false, display: Disabled}
-#  global.pattern_alert_icon: {value: false, display: Disabled}
 """
 
 
@@ -80,14 +93,12 @@ def _unpack_logs(path: Path, password: str) -> tuple[Path, Path | None]:
     return tmp, tmp
 
 
-def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False,
-          dry_run: bool = False, template: Path | None = None) -> HealthCheck:
-    prof = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
-    base = profile_path.parent
-    opts = prof.get("options", {}) or {}
-    ev = prof.get("evidence", {}) or {}
-    rules = load_rules(opts.get("rules", "apexone_sep"))
+def _load_profile(profile_path: Path) -> tuple[dict, Path, dict, dict]:
+    prof = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    return prof, profile_path.parent, prof.get("options", {}) or {}, prof.get("evidence", {}) or {}
 
+
+def _new_healthcheck(prof: dict) -> tuple[HealthCheck, dt.date]:
     check = _date(prof.get("check_date"))
     report = _date(prof.get("report_date")) or dt.date.today()
     hc = HealthCheck(
@@ -100,12 +111,16 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
         check_date_display=check.strftime("%d-%m-%Y") if check else "",
         report_date=report.strftime("%d/%m/%Y"),
     )
-    say = print
+    return hc, report
 
-    # ---- structured exports ------------------------------------------------
-    cleanup = None
-    if ev.get("logs"):
-        logs_dir, cleanup = _unpack_logs(base / ev["logs"], str(ev.get("zip_password") or ""))
+
+def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print) -> None:
+    """Policy export, agent list and log exports - all local file parsing."""
+    if not ev.get("logs"):
+        say("no logs/exports configured - every setting will need a screenshot or checklist entry")
+        return
+    logs_dir, cleanup = _unpack_logs(base / ev["logs"], str(ev.get("zip_password") or ""))
+    try:
         pols = sorted(logs_dir.rglob("*.cmpolicy"))
         for i, pf in enumerate(pols):
             facts, pol = policy.extract(pf)
@@ -126,46 +141,83 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
         hc.add_facts(facts)
         hc.metrics.update(metrics)
         say(f"log exports: {len(facts)} files read")
+    finally:
+        if cleanup:
+            shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def make_checklist(profile_path: Path, force: bool = False) -> Path:
+    prof, base, opts, ev = _load_profile(profile_path)
+    rules = load_rules(opts.get("rules", "apexone_sep"))
+    hc, _ = _new_healthcheck(prof)
+    _load_exports(hc, base, ev, opts)
+    out = base / ev.get("checklist", "checklist.xlsx")
+    if out.exists() and not force:
+        sys.exit(f"{out} already exists - it may hold your answers. Use --force to overwrite.")
+    covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
+    # Pre-fill anything a local screenshot reading already found, for confirmation.
+    cache = screenshots.ShotCache(base / "screenshot_cache.json")
+    prefill = {f.key: f for f in cache.facts(float(opts.get("min_confidence", 0.6)))}
+    path = checklist.write(out, screenshots.field_catalogue(rules), covered,
+                           client=hc.client_name, prefill=prefill)
+    print(f"checklist: {path}  - fill the yellow 'Deployed' column, then run the report")
+    return path
+
+
+def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False,
+          dry_run: bool = False, template: Path | None = None) -> HealthCheck:
+    prof, base, opts, ev = _load_profile(profile_path)
+    rules = load_rules(opts.get("rules", "apexone_sep"))
+    hc, report = _new_healthcheck(prof)
+    say = print
+
+    _load_exports(hc, base, ev, opts, say)
 
     # ---- screenshots -------------------------------------------------------
     out_dir = out_dir or (base / "output")
     cache_path = base / "screenshot_cache.json"
-    if ev.get("screenshots_docx"):
-        docx_path = base / ev["screenshots_docx"]
+    reader_kind = str(opts.get("reader", "none")).lower()
+    min_conf = float(opts.get("min_confidence", 0.6))
+    if ev.get("screenshots_docx") and reader_kind != "none" and not offline:
         covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
-        if offline:
-            cache = screenshots.ShotCache(cache_path)
-            facts = cache.facts(float(opts.get("min_confidence", 0.6)))
-            say(f"screenshots: offline, {len(facts)} readings from cache")
-        else:
-            facts, cache = screenshots.run(
-                docx_path, rules, cache_path, covered_keys=covered,
-                model=opts.get("model", screenshots.DEFAULT_MODEL),
-                skip_covered=bool(opts.get("skip_covered", True)), dry_run=dry_run, progress=say)
-            facts = cache.facts(float(opts.get("min_confidence", 0.6)))
-        hc.add_facts(facts)
+        reader = screenshots.make_reader(opts)
+        screenshots.run(base / ev["screenshots_docx"], rules, cache_path, covered_keys=covered,
+                        reader=reader, skip_covered=bool(opts.get("skip_covered", True)),
+                        dry_run=dry_run, progress=say)
         if dry_run:
             return hc
+    cache_facts = screenshots.ShotCache(cache_path).facts(min_conf)
+    if cache_facts:
+        hc.add_facts(cache_facts)
+        say(f"screenshots: {len(cache_facts)} readings from cache")
 
-    # ---- analyst entries ----------------------------------------------------
+    # ---- checklist + analyst entries ---------------------------------------
+    cl_path = base / ev.get("checklist", "checklist.xlsx")
+    cl_facts = checklist.read(cl_path, screenshots.field_catalogue(rules))
+    if cl_facts:
+        hc.add_facts(cl_facts)
+        say(f"checklist: {len(cl_facts)} values from {cl_path.name}")
     for key, spec in (prof.get("manual_facts") or {}).items():
         spec = spec if isinstance(spec, dict) else {"value": spec, "display": str(spec)}
-        hc.add_fact(Fact(key=key, value=spec.get("value"), display=str(spec.get("display", spec.get("value"))),
+        hc.add_fact(Fact(key=key, value=spec.get("value"),
+                         display=str(spec.get("display", spec.get("value"))),
                          source=Source.MANUAL, evidence=spec.get("note", "entered in client profile")))
 
     # ---- evaluate + render --------------------------------------------------
     evaluate(hc, rules)
-    stem = f"{hc.client_name.split()[0] if hc.client_name else 'Client'}_SEP_Health_Check_Report_{report.strftime('%b_%Y')}"
+    first = hc.client_name.split()[0] if hc.client_name else "Client"
+    stem = f"{first}_SEP_Health_Check_Report_{report.strftime('%b_%Y')}"
     docx_out = render(hc, out_dir / f"{stem}.docx", template or DEFAULT_TEMPLATE,
                       product=prof.get("product", "Standard Endpoint Protection"))
     review_out = write_review(hc, out_dir / f"{stem}_review.xlsx")
     counts = status_counts(hc)
     say(f"\nrows: {counts}")
+    if counts.get("unknown"):
+        say(f"  {counts['unknown']} settings not captured - see the 'Not captured' sheet, "
+            f"or run `python -m tmhc checklist {profile_path}` to fill them in")
     say(f"gaps: {len(hc.gaps_server)} server, {len(hc.gaps_policy)} policy")
     say(f"report: {docx_out}")
     say(f"review: {review_out}")
-    if cleanup:
-        shutil.rmtree(cleanup, ignore_errors=True)
     return hc
 
 
@@ -174,22 +226,33 @@ def main(argv=None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_init = sub.add_parser("init", help="write a starter client profile")
     p_init.add_argument("profile", type=Path)
+    p_cl = sub.add_parser("checklist", help="create the Excel checklist of settings to fill in")
+    p_cl.add_argument("profile", type=Path)
+    p_cl.add_argument("--force", action="store_true", help="overwrite an existing checklist")
     p_run = sub.add_parser("run", help="build the report for a client profile")
     p_run.add_argument("profile", type=Path)
     p_run.add_argument("--out", type=Path, help="output folder (default: <profile dir>/output)")
-    p_run.add_argument("--offline", action="store_true", help="use the screenshot cache only, no API calls")
+    p_run.add_argument("--offline", action="store_true",
+                       help="don't read any new screenshots; use cache, checklist and exports only")
     p_run.add_argument("--dry-run", action="store_true", help="list screenshots that would be read, then stop")
     p_run.add_argument("--template", type=Path, help="alternative Word template")
     a = ap.parse_args(argv)
 
-    if a.cmd == "init":
-        if a.profile.exists():
-            sys.exit(f"{a.profile} already exists")
-        a.profile.parent.mkdir(parents=True, exist_ok=True)
-        a.profile.write_text(STARTER_PROFILE, encoding="utf-8")
-        print(f"wrote {a.profile}")
-    elif a.cmd == "run":
-        build(a.profile, a.out, offline=a.offline, dry_run=a.dry_run, template=a.template)
+    try:
+        if a.cmd == "init":
+            if a.profile.exists():
+                sys.exit(f"{a.profile} already exists")
+            a.profile.parent.mkdir(parents=True, exist_ok=True)
+            (a.profile.parent / "evidence").mkdir(exist_ok=True)
+            a.profile.write_text(STARTER_PROFILE, encoding="utf-8")
+            print(f"wrote {a.profile} - put the screenshot .docx and logs zip in "
+                  f"{a.profile.parent / 'evidence'}")
+        elif a.cmd == "checklist":
+            make_checklist(a.profile, force=a.force)
+        elif a.cmd == "run":
+            build(a.profile, a.out, offline=a.offline, dry_run=a.dry_run, template=a.template)
+    except (screenshots.CloudNotAllowed, screenshots.LocalModelUnavailable) as exc:
+        sys.exit(f"\n{exc}")
 
 
 if __name__ == "__main__":

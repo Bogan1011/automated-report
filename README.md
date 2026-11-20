@@ -11,66 +11,104 @@ the same 11 server-side gaps and 8 policy gaps, and identical counts
 (deployed, online/offline, build spread, restart-required, stale patterns,
 server-OS agents).
 
+**Runs entirely on your own machine.** The report, the evidence and the
+screenshots stay on the laptop. Nothing is uploaded unless you deliberately
+switch on the cloud reader for a client that has approved it.
+
 ```
- evidence pack                     facts (with source)           report
- ─────────────                     ───────────────────           ──────
- .cmpolicy export   ──parse──┐
- Agent List CSV     ──parse──┤                              ┌─► Word report (.docx)
- V1 log exports     ──parse──┼──► merge by precedence ──► rules ─┤
- Screenshot .docx   ──vision─┤     (export > CSV > screenshot)   └─► review workbook (.xlsx)
- Analyst entries    ─────────┘
+ evidence pack (on your laptop)          facts            report (on your laptop)
+ ─────────────────────────────           ─────            ───────────────────────
+ .cmpolicy policy export    ──parse──┐
+ Agent List CSV             ──parse──┤
+ Vision One log exports     ──parse──┼──► rules ──┬─► Word report (.docx)
+ checklist.xlsx (you fill)  ─────────┤            └─► review workbook (.xlsx)
+ screenshots (optional)  ─local model┘
 ```
 
 ## Why it is built this way
 
-* **Exports first, screenshots second.** The `.cmpolicy` policy export is
-  JSON and contains every policy setting exactly, so ~150 policy rows come
-  from it with no OCR at all. The agent-list CSV gives every count. Claude's
-  vision model is used only for console pages that have no export (licence,
-  administration settings, global agent settings) — about half the
-  screenshots, and the cost drops accordingly.
-* **Never invents a value.** A setting with no evidence renders as
-  *Not captured* with the Unknown icon and raises no gap. The review
-  workbook lists those settings with the console page to screenshot next time.
-* **The baseline is data, not code.** Every row, its Trend-recommended
-  value, how it is judged and the remediation sentence live in
-  `tmhc/rules/apexone_sep.yaml`. Change the baseline there.
-* **Your template, untouched.** The Word template is made from one of your
-  own finished reports, so cover page, styles, intro, Vision One section
-  and links are exactly yours. Generated rows are cloned from prototype
-  rows in that template, keeping borders, shading and numbering.
+* **Exports first.** The `.cmpolicy` policy export contains every policy
+  setting exactly, so ~150 policy rows need no screenshot at all. The
+  agent-list CSV gives every count.
+* **About 40 settings have no export** (licence, Apex One global agent
+  settings, update schedule, syslog, AD, notifications...). You capture
+  those one of two ways, both local:
+  * **Checklist (no AI, any laptop)** - an Excel sheet listing just those
+    settings with dropdowns and where to find each one in the console.
+    Fill it during the Teams session.
+  * **Local vision model (needs a GPU)** - an AI model running in Ollama on
+    your own PC reads the screenshot Word file.
+* **Never invents a value.** A setting with no evidence shows as
+  *Not captured* with the Unknown icon and raises no gap.
+* **Baseline is data, not code** - `tmhc/rules/apexone_sep.yaml` holds every
+  row, its Trend-recommended value, the check and the remediation sentence.
+* **Your own template** - made from one of your finished reports, so the
+  cover, styles, intro and links are exactly yours.
 
-## Install
+## Set up on a Windows laptop (once)
 
-```bash
-pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...      # only needed for reading screenshots
-```
+1. Install **Python 3.11+** from python.org (tick *Add python.exe to PATH*).
+2. Download this repository (Code > Download ZIP, or `git clone`) and open a
+   terminal in its folder.
+3. `pip install -r requirements.txt`
+4. Check it works: `python -m pytest -q`
+
+No account, key or internet connection is needed after this.
 
 ## Run a health check
 
 ```bash
-python -m tmhc init clients/acme/profile.yaml     # starter profile
-# put the evidence next to it, edit names/dates/paths in the profile
-python -m tmhc run clients/acme/profile.yaml --dry-run   # which screenshots will be read
-python -m tmhc run clients/acme/profile.yaml             # build the report
+python -m tmhc init clients/Acme/profile.yaml
+```
+This creates the client folder. Put the evidence in `clients/Acme/evidence/`:
+
+```
+clients/Acme/
+  profile.yaml                  <- client name, dates, your name
+  evidence/
+    Acme_SEP_SS.docx            <- all screenshots in one Word file
+    Acme_SEP_Logs.zip           <- CSV + .cmpolicy exports
 ```
 
-Output in `clients/acme/output/`:
+### Office laptop (no GPU) - checklist
+
+```bash
+python -m tmhc checklist clients/Acme/profile.yaml   # creates clients/Acme/checklist.xlsx
+# fill the yellow "Deployed" column (during or after the session)
+python -m tmhc run clients/Acme/profile.yaml         # builds the report
+```
+The checklist only lists what the exports don't already prove (about 40
+rows for an Apex One / SEP check). Blank rows show as *Not captured*.
+
+### PC with a GPU - local AI reads the screenshots
+
+1. Install **Ollama** from ollama.com and run `ollama pull qwen2.5vl:7b`
+   (about 6 GB, one-time). On a GPU with less than 8 GB use `qwen2.5vl:3b`.
+2. In `profile.yaml` set `reader: local`.
+3. `python -m tmhc run clients/Acme/profile.yaml`
+
+The model only answers on `127.0.0.1`; the tool refuses any other address.
+Then run `python -m tmhc checklist ...` to confirm or fill whatever the
+model missed - its readings are pre-filled in the checklist for you to check.
+
+Without a GPU the local model still works but is slow (minutes per
+screenshot); the checklist is quicker.
+
+### Output
+
+In `clients/Acme/output/`:
 
 | File | Purpose |
 |---|---|
-| `Acme_SEP_Health_Check_Report_<Mon>_<Year>.docx` | the client report — open in Word and accept the prompt to update the table of contents |
-| `..._review.xlsx` | every row with its source and evidence, the gap list, conflicts between sources, and a **Not captured** sheet |
-| `screenshot_cache.json` | (next to the profile) every value the vision model read, with the on-screen quote |
+| `Acme_SEP_Health_Check_Report_<Mon>_<Year>.docx` | the client report - open in Word and accept the prompt to update the table of contents |
+| `..._review.xlsx` | every row with its source and evidence, the gap list, and a **Not captured** sheet |
 
 ### Reviewing and correcting
 
 1. Open the review workbook. Filter **Rows** by *Source = Screenshot* and
    spot-check the quotes in the Evidence column.
-2. A wrong screenshot reading: fix the `value`/`display` in
-   `screenshot_cache.json`, then `python -m tmhc run profile.yaml --offline`
-   (re-renders from the cache, no API calls).
+2. A wrong screenshot reading: correct it in the checklist (checklist
+   values win over screenshot readings), then run again.
 3. A setting you confirmed verbally but have no screenshot for: add it under
    `manual_facts:` in the profile. It wins over every other source and is
    labelled *Analyst entry* in the workbook.
@@ -113,7 +151,7 @@ just asked about every missing field.
   ```
   The tool refuses to save if any of the original client strings survive.
   Use it with `run --template my_template.docx`.
-* **Vision model** — `options.model` in the profile or `TMHC_MODEL`.
+* **Local model** — `options.local_model` in the profile (any Ollama vision model).
 
 ## Other products
 
@@ -127,11 +165,15 @@ Workload Protection policy export).
 
 ## Data handling
 
-Customer evidence and generated reports are **never** committed:
-`.gitignore` excludes `clients/`, `output/`, `*.cmpolicy`, `*.csv`, `*.zip`,
-caches and every `.docx`/`.xlsx` except the template. Keep client folders
-outside the repo or under `clients/`. Screenshots are sent to the Anthropic
-API only when you run without `--offline`.
+* Default is `reader: none` - no AI, nothing leaves the machine.
+* `reader: local` talks only to Ollama on `127.0.0.1`. Any other host is
+  refused unless `allow_remote_host: true` (for a GPU server you control).
+* `reader: cloud` (Anthropic API) is refused unless the profile also sets
+  `allow_cloud: true`, and needs `pip install anthropic`. Use it only where
+  the client has approved sending screenshots to a cloud service.
+* Client evidence and generated reports are never committed: `.gitignore`
+  excludes `clients/`, `output/`, `*.cmpolicy`, `*.csv`, `*.zip`, caches,
+  checklists and every `.docx`/`.xlsx` except the template.
 
 ## Tests
 

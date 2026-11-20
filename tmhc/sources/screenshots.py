@@ -1,4 +1,4 @@
-"""Read console screenshots (pasted into a Word file) with Claude's vision model.
+"""Read console screenshots (pasted into a Word file) with a vision model.
 
 Workflow
 --------
@@ -6,14 +6,23 @@ Workflow
    picture with the most recent text label above it ("License", "Realtime
    RT", "Schedule update", ...). Those labels are what the analyst already
    types during the Teams session, so they become hints, not requirements.
-2. For each picture we ask Claude for the values of a known list of fields
-   (derived from the rule pack) and get JSON back.
+2. For each picture a vision model is asked for the values of a known list
+   of fields (derived from the rule pack) and answers in JSON.
 3. Every answer is cached on disk, keyed by the picture's SHA-1. Re-running
    costs nothing, and the analyst can open the cache JSON, correct a value
-   and re-render without touching the API.
+   and re-render.
+
+Where the model runs (``reader`` option):
+
+* ``local`` (default) - a vision model served by Ollama on THIS machine.
+  Screenshots never leave the computer. The host must be localhost; any
+  other address is refused unless ``allow_remote_host`` is set (e.g. a GPU
+  box on the office LAN that you control).
+* ``cloud`` - Anthropic's API. Refused unless the profile also sets
+  ``allow_cloud: true``, so client data cannot go to the cloud by accident.
 
 Screenshots whose fields are already proved by a structured export (the
-.cmpolicy file) are skipped by default, which removes most of the API cost.
+.cmpolicy file) are skipped by default, which removes about half the work.
 """
 from __future__ import annotations
 
@@ -35,7 +44,19 @@ W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R_EMBED = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
 R_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 
-DEFAULT_MODEL = os.environ.get("TMHC_MODEL", "claude-sonnet-5-5")
+DEFAULT_CLOUD_MODEL = os.environ.get("TMHC_CLOUD_MODEL", "claude-sonnet-5-5")
+DEFAULT_LOCAL_MODEL = os.environ.get("TMHC_LOCAL_MODEL", "qwen2.5vl:7b")
+DEFAULT_LOCAL_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+DEFAULT_MODEL = DEFAULT_LOCAL_MODEL  # backwards-compatible name
+LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+class CloudNotAllowed(RuntimeError):
+    pass
+
+
+class LocalModelUnavailable(RuntimeError):
+    pass
 
 
 # --------------------------------------------------------------------------
@@ -176,7 +197,8 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
         # answers, so they must never be presented to the model as a closed list.
         return "text", None
 
-    def add(rule: dict, prefix: Optional[str] = None, block: Optional[str] = None) -> None:
+    def add(rule: dict, prefix: Optional[str] = None, block: Optional[str] = None,
+            heading: str = "") -> None:
         key = rule.get("key")
         if not key or key == "_always" or key.startswith("inventory.") or key.startswith("logs."):
             return
@@ -188,12 +210,16 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
                 vocab = codes
         label = " - ".join(x for x in (block, rule.get("group"), rule.get("component"),
                                        rule.get("sub"), rule.get("recommended")) if x)
-        cat[key] = {"label": label.replace("{p}", ""), "type": typ, "vocab": vocab}
+        cat[key] = {"label": label.replace("{p}", ""), "type": typ, "vocab": vocab,
+                    "section": (block or heading or "").replace("{policy_name}", "Policy"),
+                    "setting": rule.get("component") or rule.get("group") or "",
+                    "recommended": rule.get("recommended", "")
+                                   if not rule.get("sub") else f"{rule['sub']}: {rule.get('recommended', '')}"}
 
     for section in ("server", "policy"):
         for g in rules.get(section, {}).get("groups", []) + rules.get(section, {}).get("tail_groups", []):
             for r in g.get("rows", []):
-                add(r)
+                add(r, heading=g.get("heading", ""))
     pol = rules.get("policy", {})
     for b in pol.get("scan_blocks", []):
         for t in pol.get("scan_template", []):
@@ -203,7 +229,8 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
                 continue
             add(t, b["prefix"], b["title"])
     for k, v in EXTRA_FIELDS.items():
-        cat.setdefault(k, {**v, "vocab": None})
+        cat.setdefault(k, {**v, "vocab": None, "section": "Platform / licence",
+                           "setting": v["label"], "recommended": ""})
     return cat
 
 
@@ -279,31 +306,153 @@ def _parse_json(text: str) -> dict:
     return json.loads(text)
 
 
-def ask_claude(shot: Shot, fields: dict[str, dict], model: str = DEFAULT_MODEL,
-               client: Any = None, retries: int = 3) -> dict:
-    if client is None:
-        import anthropic  # imported lazily so offline runs need no API package
-        client = anthropic.Anthropic()
-    content = [
-        {"type": "image", "source": {"type": "base64", "media_type": shot.media_type,
-                                     "data": base64.b64encode(shot.data).decode()}},
-        {"type": "text", "text": build_prompt(shot.section, fields)},
-    ]
-    last_exc: Optional[Exception] = None
-    for attempt in range(retries):
+def _chunks(fields: dict[str, dict], size: int) -> list[dict[str, dict]]:
+    items = list(fields.items())
+    return [dict(items[i:i + size]) for i in range(0, len(items), size)] or [{}]
+
+
+def _clean(result: dict, asked: dict[str, dict]) -> list[dict]:
+    """Keep only well-formed answers for fields we actually asked about."""
+    out = []
+    for f in result.get("fields", []) or []:
+        if not isinstance(f, dict) or f.get("key") not in asked:
+            continue
+        if f.get("value") is None and not f.get("display"):
+            continue
         try:
-            resp = client.messages.create(
-                model=model, max_tokens=4000, system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": content}],
-            )
-            text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-            return _parse_json(text)
-        except json.JSONDecodeError as exc:
-            last_exc = exc
-        except Exception as exc:  # rate limits, overload: back off and retry
-            last_exc = exc
-            time.sleep(2 ** attempt * 3)
-    raise RuntimeError(f"vision call failed for {shot.filename}: {last_exc}")
+            f["confidence"] = max(0.0, min(1.0, float(f.get("confidence", 0.7))))
+        except (TypeError, ValueError):
+            f["confidence"] = 0.5
+        f.setdefault("display", str(f.get("value")))
+        out.append(f)
+    return out
+
+
+class LocalReader:
+    """Vision model served by Ollama on this machine. Nothing leaves the computer."""
+
+    name = "local"
+    chunk_size = 10   # smaller local models read more accurately with short field lists
+
+    def __init__(self, model: str = DEFAULT_LOCAL_MODEL, host: str = DEFAULT_LOCAL_HOST,
+                 allow_remote_host: bool = False, timeout: int = 600):
+        from urllib.parse import urlparse
+        if "://" not in host:
+            host = "http://" + host
+        hostname = (urlparse(host).hostname or "").lower()
+        if hostname not in LOCAL_HOSTNAMES and not allow_remote_host:
+            raise CloudNotAllowed(
+                f"Ollama host {host!r} is not this machine. Screenshots would leave the computer. "
+                "Use http://127.0.0.1:11434, or set allow_remote_host: true if it is a server you control.")
+        self.model, self.host, self.timeout = model, host.rstrip("/"), timeout
+        self.label = f"ollama:{model}@{hostname}"
+
+    def check(self) -> None:
+        """Fail early with a useful message if Ollama or the model is missing."""
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{self.host}/api/tags", timeout=10) as r:
+                tags = json.loads(r.read().decode())
+        except Exception as exc:
+            raise LocalModelUnavailable(
+                f"Cannot reach Ollama at {self.host} ({exc}). Install Ollama from ollama.com, "
+                f"run `ollama pull {self.model}`, and make sure Ollama is running - "
+                "or use the no-AI checklist: `python -m tmhc checklist <profile>`.") from None
+        names = {m.get("name", "") for m in tags.get("models", [])}
+        base = self.model.split(":")[0]
+        if self.model not in names and not any(n.split(":")[0] == base for n in names):
+            raise LocalModelUnavailable(
+                f"Model {self.model!r} is not installed in Ollama. Run: ollama pull {self.model}")
+
+    def _call(self, shot: Shot, fields: dict[str, dict]) -> dict:
+        import urllib.request
+        body = {
+            "model": self.model, "stream": False, "format": "json",
+            "options": {"temperature": 0, "num_ctx": 8192},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_prompt(shot.section, fields),
+                 "images": [base64.b64encode(shot.data).decode()]},
+            ],
+        }
+        req = urllib.request.Request(f"{self.host}/api/chat", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            payload = json.loads(r.read().decode())
+        return _parse_json(payload.get("message", {}).get("content", "{}"))
+
+    def read(self, shot: Shot, fields: dict[str, dict], retries: int = 2) -> dict:
+        page, answers = "", []
+        for part in _chunks(fields, self.chunk_size):
+            last: Optional[Exception] = None
+            for _ in range(retries):
+                try:
+                    res = self._call(shot, part)
+                    page = page or str(res.get("page", ""))
+                    answers.extend(_clean(res, part))
+                    break
+                except Exception as exc:
+                    last = exc
+            else:
+                raise RuntimeError(f"local model failed on {shot.filename}: {last}")
+        return {"page": page, "fields": answers}
+
+
+class CloudReader:
+    """Anthropic API. Only constructed when the profile explicitly allows cloud."""
+
+    name = "cloud"
+    chunk_size = 60
+
+    def __init__(self, model: str = DEFAULT_CLOUD_MODEL, allow_cloud: bool = False, client: Any = None):
+        if not allow_cloud:
+            raise CloudNotAllowed(
+                "reader 'cloud' sends screenshots to Anthropic's API. Set allow_cloud: true in the "
+                "profile options if that is approved for this client; otherwise use reader: local.")
+        if client is None:
+            import anthropic  # only imported when cloud is explicitly enabled
+            client = anthropic.Anthropic()
+        self.client, self.model = client, model
+        self.label = f"anthropic:{model}"
+
+    def check(self) -> None:
+        pass
+
+    def read(self, shot: Shot, fields: dict[str, dict], retries: int = 3) -> dict:
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": shot.media_type,
+                                         "data": base64.b64encode(shot.data).decode()}},
+            {"type": "text", "text": build_prompt(shot.section, fields)},
+        ]
+        last: Optional[Exception] = None
+        for attempt in range(retries):
+            try:
+                resp = self.client.messages.create(
+                    model=self.model, max_tokens=4000, system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": content}])
+                text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+                res = _parse_json(text)
+                return {"page": res.get("page", ""), "fields": _clean(res, fields)}
+            except json.JSONDecodeError as exc:
+                last = exc
+            except Exception as exc:  # rate limit / overload
+                last = exc
+                time.sleep(2 ** attempt * 3)
+        raise RuntimeError(f"cloud call failed for {shot.filename}: {last}")
+
+
+def make_reader(opts: dict):
+    """Build the reader named in the profile options. Defaults to local."""
+    kind = str(opts.get("reader", "local")).lower()
+    if kind == "local":
+        return LocalReader(model=opts.get("local_model", DEFAULT_LOCAL_MODEL),
+                           host=opts.get("ollama_host", DEFAULT_LOCAL_HOST),
+                           allow_remote_host=bool(opts.get("allow_remote_host", False)))
+    if kind == "cloud":
+        return CloudReader(model=opts.get("cloud_model", DEFAULT_CLOUD_MODEL),
+                           allow_cloud=bool(opts.get("allow_cloud", False)))
+    raise ValueError(f"unknown reader {kind!r}: use 'local' or 'cloud' "
+                     "(or skip screenshots and use `tmhc checklist`)")
 
 
 # --------------------------------------------------------------------------
@@ -354,16 +503,19 @@ class ShotCache:
 
 
 def run(docx_path: str | Path, rules: dict, cache_path: str | Path,
-        covered_keys: Iterable[str] = (), model: str = DEFAULT_MODEL,
+        covered_keys: Iterable[str] = (), reader: Any = None,
         skip_covered: bool = True, dry_run: bool = False,
         progress=print) -> tuple[list[Fact], ShotCache]:
-    """Read every screenshot not already in the cache and return facts."""
+    """Read every screenshot not already in the cache and return facts.
+
+    ``reader`` is a LocalReader / CloudReader (see ``make_reader``). It is
+    only required when there is something left to read.
+    """
     catalogue = field_catalogue(rules)
     covered = set(covered_keys)
     wanted = {k for k in catalogue if k not in covered} if skip_covered else set(catalogue)
     cache = ShotCache(cache_path)
     shots = extract_images(docx_path)
-    client = None
     todo = []
     for shot in shots:
         if cache.get(shot.sha1):
@@ -381,12 +533,14 @@ def run(docx_path: str | Path, rules: dict, cache_path: str | Path,
                      f"-> {len(fields)} fields")
         return cache.facts(), cache
 
+    if todo:
+        if reader is None:
+            raise ValueError("screenshots need reading but no reader was configured")
+        reader.check()
+        progress(f"reading with {reader.label}")
     for n, (shot, fields) in enumerate(todo, 1):
-        if client is None:
-            import anthropic
-            client = anthropic.Anthropic()
         progress(f"  [{n}/{len(todo)}] {shot.filename} [{shot.section}] ({len(fields)} fields)")
-        result = ask_claude(shot, fields, model=model, client=client)
-        cache.put(shot, result, model)
+        result = reader.read(shot, fields)
+        cache.put(shot, result, reader.label)
         cache.save()  # save as we go so an interrupted run loses nothing
     return cache.facts(), cache

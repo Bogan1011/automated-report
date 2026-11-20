@@ -15,17 +15,24 @@ evidence:
   screenshots_docx: evidence/Acme_SEP_SS.docx   # Word file of console screenshots
   logs: evidence/Acme_SEP_Logs.zip              # folder or zip of CSV / .cmpolicy exports
   zip_password: ""                              # if the zip is protected
+  checklist: checklist.xlsx                     # created by `python -m tmhc checklist`
 
 options:
-  rules: apexone_sep               # rule pack in tmhc/rules/
+  rules: apexone_sep
   stale_pattern_releases: 12       # ~7 days of smart-scan pattern releases
   min_confidence: 0.6              # ignore screenshot readings below this
-  model: claude-sonnet-5-5         # vision model for screenshots
-  skip_covered: true               # don't read screenshots for settings the .cmpolicy proves
+  skip_covered: true               # don't read screenshots for settings the exports prove
 
-# Values you confirmed in the session but have no screenshot or export for.
-# They override everything else and are labelled "Analyst entry" in the
-# review workbook.
+  # How screenshots are read. Nothing leaves this machine unless you choose 'cloud'.
+  #   none  - don't read screenshots; use the checklist (works on any laptop)
+  #   local - vision model in Ollama on this machine (needs a decent GPU)
+  #   cloud - Anthropic API; ALSO needs allow_cloud: true
+  reader: none
+  local_model: qwen2.5vl:7b        # qwen2.5vl:3b for smaller GPUs
+  ollama_host: http://127.0.0.1:11434
+  allow_cloud: false
+
+# Values you confirmed in the session but have no screenshot, export or
+# checklist entry for. They override everything else.
 manual_facts: {}
 #  global.scan_cookies: {value: false, display: Disabled}
-#  global.pattern_alert_icon: {value: false, display: Disabled}
