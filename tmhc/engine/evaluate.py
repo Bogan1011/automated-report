@@ -313,11 +313,16 @@ def _evaluate_scoped(hc: HealthCheck, b: "_Builder", pol: dict) -> None:
     for sid, name in scopes:
         rid = 0
         for g in pol.get("groups", []):
+            if g.get("only") and sid not in g["only"]:
+                rid += len(g.get("rows", []))       # keep rule ids aligned across policies
+                continue
             heading = _fmt(g["heading"].replace("{name}", name), hc)
             hc.rows_policy.append(ReportRow(section=name, component=heading, recommended="", deployed="",
                                             status=Status.INFO, group="__heading__"))
             for rule in g.get("rows", []):
                 rid += 1
+                if rule.get("only") and sid not in rule["only"]:
+                    continue
                 r = dict(rule, _rid=rid)
                 for k in ("key", "display_key"):
                     if r.get(k):
@@ -333,6 +338,9 @@ def _evaluate_scoped(hc: HealthCheck, b: "_Builder", pol: dict) -> None:
             by_rule.setdefault(r_id, {})[sid] = gap
     ids = [sid for sid, _ in scopes]
     names = dict(scopes)
+    if pol.get("gap_sets"):
+        hc.gaps_policy.extend(_gap_sets(pol, by_rule, names, hc))
+        return
     both = [g[ids[0]] for r_id, g in sorted(by_rule.items()) if len(ids) > 1 and all(s in g for s in ids)]
     out: list[Gap] = []
     if both:
@@ -349,6 +357,43 @@ def _evaluate_scoped(hc: HealthCheck, b: "_Builder", pol: dict) -> None:
                            scope="policy", group=sid, heading=True))
             out.extend(only)
     hc.gaps_policy.extend(out)
+
+
+def _join_names(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _gap_sets(pol: dict, by_rule: dict, names: dict, hc: HealthCheck) -> list[Gap]:
+    """Gap table grouped by sets of policies (CECP: Exchange on its own, then
+    SharePoint / OneDrive / Teams together).
+
+    Within a set, a gap raised by every policy of the set is listed once under
+    `set_heading` ({names} = the policies joined "A, B and C"); gaps raised by
+    only some of them go under `scope_heading` per policy.
+    """
+    out: list[Gap] = []
+    for gs in pol["gap_sets"]:
+        ids = [s for s in gs["scopes"] if s in names]
+        if not ids:
+            continue
+        shared = [g[ids[0]] for _, g in sorted(by_rule.items()) if all(s in g for s in ids)]
+        if shared:
+            joined = _join_names([names[s] for s in ids])
+            tmpl = gs.get("set_heading" if len(ids) > 1 else "heading", gs.get("heading", "In {names}:"))
+            out.append(Gap(text=_fmt(tmpl.replace("{names}", joined).replace("{name}", joined), hc),
+                           scope="policy", group="+".join(ids), heading=True))
+            for g in shared:
+                g.group = "+".join(ids)
+                out.append(g)
+        if len(ids) > 1:
+            for sid in ids:
+                only = [g[sid] for _, g in sorted(by_rule.items()) if sid in g and not all(s in g for s in ids)]
+                if only:
+                    tmpl = gs.get("heading", "In {name}:")
+                    out.append(Gap(text=_fmt(tmpl.replace("{name}", names[sid]).replace("{names}", names[sid]), hc),
+                                   scope="policy", group=sid, heading=True))
+                    out.extend(only)
+    return out
 
 
 def _order_gaps(hc: HealthCheck) -> None:

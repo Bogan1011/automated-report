@@ -124,11 +124,17 @@ class Deck:
             if el.tag in (qn("p:nvGrpSpPr"), qn("p:grpSpPr")):
                 continue
             new_el = copy.deepcopy(el)
-            for blip in new_el.iter(qn("a:blip")):
-                rid = blip.get(qn("r:embed"))
-                if rid:
-                    rel = src.part.rels[rid]
-                    blip.set(qn("r:embed"), slide.part.relate_to(rel._target, rel.reltype))
+            # every relationship reference (pictures, SVG "graphics", links) must point at
+            # a relationship of the new slide
+            for node in new_el.iter():
+                for attr in (qn("r:embed"), qn("r:link"), qn("r:id")):
+                    rid = node.get(attr)
+                    if rid and rid in src.part.rels:
+                        rel = src.part.rels[rid]
+                        if rel.is_external:
+                            node.set(attr, slide.part.relate_to(rel.target_ref, rel.reltype, is_external=True))
+                        else:
+                            node.set(attr, slide.part.relate_to(rel._target, rel.reltype))
             slide.shapes._spTree.append(new_el)
         self.out.append(slide)
         return slide
@@ -825,6 +831,126 @@ def _set_action_columns(table, actions: list[str]) -> None:
 
 
 # --------------------------------------------------------------------------
+# Cloud Email and Collaboration Protection
+# --------------------------------------------------------------------------
+def _exec_slide_levels(deck: Deck, label: str, findings: list[str]) -> None:
+    """Executive summary whose cell has a main ("Ø") and a sub ("o") bullet prototype;
+    lines starting with a tab use the sub bullet."""
+    s = deck.new("exec")
+    for sh in s.shapes:
+        if not sh.has_table:
+            continue
+        t = sh.table
+        _cell_text(t.cell(1, 0), label)
+        tf = t.cell(1, 1).text_frame
+        paras = [p._p for p in tf.paragraphs]
+        sub = next((p for p in paras if "{{EXEC_SUB}}" in "".join(x.text or "" for x in p.iter(qn("a:t")))), None)
+        main = paras[0]
+        protos = (copy.deepcopy(main), copy.deepcopy(sub if sub is not None else main))
+        body = main.getparent()
+        for p in paras:
+            body.remove(p)
+        for line in findings or ["No findings."]:
+            p = copy.deepcopy(protos[1] if line.startswith("\t") else protos[0])
+            _fill_para(p, line.lstrip("\t"))
+            body.append(p)
+
+
+def _picture_at(slide, placeholder: str, png: bytes) -> bool:
+    import io
+    geom = _replace_picture(slide, placeholder)
+    if geom is None:
+        return False
+    slide.shapes.add_picture(io.BytesIO(png), *geom)
+    return True
+
+
+def _chart(slide, placeholder: str, title: str, items, vertical) -> None:
+    if vertical is None:
+        pie_chart(slide, placeholder, title, items)
+    else:
+        bar_chart(slide, placeholder, title, items)
+
+
+def _grouped_findings_slides(deck: Deck, gaps) -> None:
+    """One table: gap rows with sub-heading rows; a heading is repeated when its
+    gaps continue on the next slide."""
+    items = [("heading" if g.heading else "findings", g.text) for g in gaps]
+    if not items:
+        return
+    pages = _paginate(items, 20, lambda it: 1 if it[0] == "heading" else _gap_cost(it[1]))
+    for i in range(len(pages) - 1):               # never end a slide with a lone sub-heading
+        while pages[i] and pages[i][-1][0] == "heading":
+            pages[i + 1].insert(0, pages[i].pop())
+    current = None
+    for page in [p for p in pages if p]:
+        if page[0][0] != "heading" and current:
+            page = [("heading", current)] + page
+        for k, t in page:
+            if k == "heading":
+                current = t
+        s = deck.new("grouped_findings")
+        _title(s, "Findings & Recommendations")
+        for sh in s.shapes:
+            if sh.has_table:
+                _table_rows(sh.table, [(k, [t]) for k, t in page])
+
+
+def _cecp(deck: Deck, hc: HealthCheck, logs: Optional[Path], product: str) -> None:
+    from ..sources import cecp_exports
+    from .docx_report import THREAT_ORDER, cecp_findings, threat_charts
+    m = hc.metrics
+    _title_slide(deck, product)
+    if "static" in deck.protos:
+        deck.new("static")
+    _exec_slide_levels(deck, "TrendAI Cloud Email and Collaboration Protection", cecp_findings(hc))
+
+    s = deck.new("totals")
+    _title(s, "Total Scans and Detections")
+    if m.get("_total_panel_png"):
+        _picture_at(s, "CHART_1", m["_total_panel_png"])
+    else:
+        _replace_picture(s, "CHART_1")
+    counts = sorted((m.get("threat_counts") or {}).items(), key=lambda kv: -kv[1])
+    if counts:
+        bar_chart(s, "CHART_2", f"Threat Detected in {m.get('month_name', '')}".strip(), counts)
+    else:
+        _replace_picture(s, "CHART_2")
+    lines = []
+    if m.get("period_from"):
+        lines.append(f"We collected logs from {m['period_from']} to {m['period_to']}.")
+    if m.get("total_scans"):
+        lines.append(f"The total number of Items scanned (Files/Chats/Records/Emails) in the {m.get('month_abbr', '')} "
+                     f"Month was **{m['total_scans_text']}** and  **{m.get('threats_total', 0)}** threats were detected.")
+    _text(s, lines or ["No detection logs were provided."])
+
+    threats = m.get("threats") or {}
+    for ttype in [t for t in THREAT_ORDER if t in threats] + [t for t in threats if t not in THREAT_ORDER]:
+        info = threats[ttype]
+        charts = threat_charts(ttype, info)
+        count = cecp_exports.count_sentence(ttype, info, m, short=True).replace(
+            f" {ttype} ", f" **{ttype}** ", 1)
+        action = cecp_exports.action_sentence(ttype, info)
+        if not charts:
+            continue
+        first, rest = (charts[:2], charts[2:]) if len(charts) != 2 else (charts, [])
+        kind = "two_charts" if len(first) == 2 else "one_chart"
+        s = deck.new(kind)
+        _title(s, f"{ttype} Detections:")
+        for i, (title, items, vertical) in enumerate(first, 1):
+            _chart(s, f"CHART_{i}", title, items, vertical)
+        _text(s, [count] + ([action] if action and not rest else []))
+        for title, items, vertical in rest:
+            s = deck.new("one_chart")
+            _title(s, f"{ttype} Detections:")
+            _chart(s, "CHART_1", title, items, vertical)
+            _text(s, [action] if action else [count])
+
+    _grouped_findings_slides(deck, list(hc.gaps_server) + list(hc.gaps_policy))
+    deck.new("end")
+
+
+# --------------------------------------------------------------------------
 def render_presentation(hc: HealthCheck, out_path: str | Path, short: str = "SEP",
                         logs_dir: Optional[Path] = None, product: str = "") -> Path:
     template = TEMPLATES / f"{short.lower()}_efficacy_template.pptx"
@@ -834,6 +960,8 @@ def render_presentation(hc: HealthCheck, out_path: str | Path, short: str = "SEP
     logs = Path(logs_dir) if logs_dir else None
     if short == "SWP":
         _swp(deck, hc, logs, product or "Server & Workload Protection")
+    elif short == "CECP":
+        _cecp(deck, hc, logs, product or "Cloud Email and Collaboration Protection")
     else:
         _sep(deck, hc, logs, product or "Standard Endpoint Protection")
     cp = deck.prs.core_properties

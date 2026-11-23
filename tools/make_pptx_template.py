@@ -35,6 +35,8 @@ LAYOUTS = {
             9: "findings", 11: "policy_findings", 12: "end"},
     "sep": {1: "title", 2: "exec", 3: "versions", 4: "two_charts", 5: "one_chart", 14: "bm_table",
             15: "findings", 17: "policy_findings", 19: "end"},
+    "cecp": {1: "title", 2: "static", 3: "exec", 4: "totals", 5: "two_charts", 7: "one_chart",
+             10: "grouped_findings", 12: "end"},
 }
 STATIC_TEXT = {"cve": {"TextBox 5"}}       # generic advice kept as written
 
@@ -127,6 +129,8 @@ def build(src: Path, dst: Path, product: str) -> None:
             continue
         kinds.append(kind)
         keep_ids.append(slide.slide_id)
+        if kind == "static":                 # generic product slide, kept exactly as designed
+            continue
         pics = sorted([s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE], key=lambda s: (s.top, s.left))
         for n, pic in enumerate(pics, 1):
             w, h = max(1, int(pic.width / 12700)), max(1, int(pic.height / 12700))
@@ -151,9 +155,15 @@ def build(src: Path, dst: Path, product: str) -> None:
                 _keep_rows(t, {0: "{{KEEP}}", 1: None})
                 _set_cell(t.cell(1, 0), "{{EXEC_PRODUCT}}")
                 tf = t.cell(1, 1).text_frame
+                sub = next((p for p in list(tf.paragraphs)[1:]
+                            if _bullet(p) == "o" or (p._p.pPr is not None and p._p.pPr.get("lvl") not in (None, "0"))),
+                           None)
                 for p in list(tf.paragraphs)[1:]:
-                    p._p.getparent().remove(p._p)
+                    if sub is None or p._p is not sub._p:
+                        p._p.getparent().remove(p._p)
                 _set_runs(tf.paragraphs[0], "{{EXEC_FINDINGS}}")
+                if sub is not None:                  # second-level ("o") bullet prototype
+                    _set_runs(sub, "{{EXEC_SUB}}")
             elif kind == "versions":
                 _keep_rows(t, {0: "{{KEEP}}", 1: "{{ROW:item}}", -1: "{{ROW:total}}"})
             elif kind == "bm_table":
@@ -167,6 +177,8 @@ def build(src: Path, dst: Path, product: str) -> None:
                     _keep_rows(t, {0: "{{ROW:item}}", -1: "{{ROW:total}}"})
             elif kind == "findings":
                 _keep_rows(t, {0: "{{ROW:findings}}"})
+            elif kind == "grouped_findings":
+                _keep_rows(t, {0: "{{ROW:findings}}", 1: "{{ROW:heading}}"})
             elif kind == "policy_findings":
                 if product == "swp":
                     _keep_rows(t, {0: "{{ROW:header}}", 1: "{{ROW:heading}}", 2: "{{ROW:findings}}"})
@@ -206,6 +218,14 @@ def strip_history(dst: Path) -> None:
     drop = ("ppt/changesInfos/", "ppt/revisionInfo.xml", "ppt/commentAuthors.xml", "ppt/authors.xml",
             "ppt/comments/", "docProps/custom.xml")
     tmp = dst.with_suffix(".tmp")
+    with zipfile.ZipFile(dst) as zin:
+        # theme names are often personal ("Main Layout <analyst>"): neutral names instead
+        theme_names = set()
+        for n in zin.namelist():
+            if n.startswith("ppt/theme/") and n.endswith(".xml"):
+                mt = re.search(r'<a:theme [^>]*name="([^"]*)"', zin.read(n).decode("utf-8", "ignore"))
+                if mt and mt.group(1).strip():
+                    theme_names.add(mt.group(1))
     with zipfile.ZipFile(dst) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             if item.filename.startswith(drop):
@@ -221,6 +241,12 @@ def strip_history(dst: Path) -> None:
                 txt = data.decode("utf-8")
                 txt = re.sub(r'<Relationship [^>]*Target="[^"]*(?:changesInfo|revisionInfo|commentAuthors|authors\.xml|'
                              r'comments/|custom\.xml)[^"]*"[^>]*/>', "", txt)
+                data = txt.encode("utf-8")
+            if item.filename.startswith("ppt/theme/") or item.filename == "docProps/app.xml":
+                txt = data.decode("utf-8")
+                for i, name in enumerate(sorted(theme_names), 1):
+                    txt = txt.replace(f'name="{name}"', f'name="Theme {i}"').replace(
+                        f"<vt:lpstr>{name}</vt:lpstr>", f"<vt:lpstr>Theme {i}</vt:lpstr>")
                 data = txt.encode("utf-8")
             zout.writestr(item, data)
     tmp.replace(dst)

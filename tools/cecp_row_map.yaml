@@ -1,0 +1,108 @@
+# Row map for the Cloud Email and Collaboration Protection (CECP) report
+# template (see tools/sep_row_map.yaml for the format). CECP has five
+# settings tables, mapped in order; rows count from 0 = table header.
+tables:
+  # ---- CECP Health Check Overview
+  - 2: license.expiry
+    3: cecp.user_count
+    4: cecp.services
+    5: cecp.lists
+    6: cecp.hp_domain
+    7: cecp.hp_user
+    8: cecp.internal_domain
+    9: cecp.suspicious_objects
+    10: cecp.pwd_guess
+  # ---- Exchange Online policy
+  - 2: exo.target
+    3: exo.skip_junk
+    5: exo.asp
+    6: exo.asp.collect
+    7: exo.asp.apply
+    8: exo.asp.level
+    9: exo.asp.susp_sender
+    10: exo.asp.other_signals
+    11: exo.asp.dns
+    12: exo.asp.retro
+    13: exo.asp.graymail
+    14: exo.asp.bec
+    15: exo.asp.act_unusual
+    17: exo.ms.apply
+    18: exo.ms.files
+    19: exo.ms.pml
+    20: exo.ms.body
+    21: exo.ms.intellitrap
+    22: exo.ms.collect
+    23: exo.ms.ac_office
+    24: exo.ms.ac_other
+    25: exo.ms.actions
+    27: exo.fb
+    28: exo.fb.apply
+    29: exo.fb.type
+    30: exo.fb.action
+    32: exo.wrs
+    33: exo.wrs.apply
+    34: exo.wrs.level
+    35: exo.wrs.attach
+    36: exo.wrs.dynamic
+    37: exo.wrs.cv
+    38: exo.wrs.retro
+    39: exo.wrs.toc
+    40: exo.wrs.exception
+    41: exo.wrs.actions
+    43: exo.va
+    44: exo.va.monitor
+    45: exo.va.apply
+    46: exo.va.actions
+    48: exo.ci
+  # ---- SharePoint Online policy
+  -
+    2: spo.target
+    4: spo.ms.files
+    5: spo.ms.pml
+    6: spo.ms.intellitrap
+    7: spo.ms.collect
+    8: spo.ms.action_state
+    10: spo.fb
+    11: spo.fb.type
+    12: spo.fb.action
+    14: spo.wrs
+    15: spo.wrs.level
+    16: spo.wrs.exception
+    17: spo.wrs.action_state
+    19: spo.va
+    20: spo.va.monitor
+    21: spo.va.action_state
+  # ---- OneDrive policy
+  - 2: odb.target
+    4: odb.ms.files
+    5: odb.ms.pml
+    6: odb.ms.intellitrap
+    7: odb.ms.collect
+    8: odb.ms.action_state
+    10: odb.fb
+    11: odb.fb.type
+    12: odb.fb.action
+    14: odb.wrs
+    15: odb.wrs.level
+    16: odb.wrs.exception
+    17: odb.wrs.action_state
+    19: odb.va
+    20: odb.va.monitor
+    21: odb.va.action_state
+  # ---- Microsoft Teams policy
+  - 2: teams.target
+    4: teams.ms.files
+    5: teams.ms.pml
+    6: teams.ms.intellitrap
+    7: teams.ms.collect
+    8: teams.ms.action_state
+    10: teams.fb
+    11: teams.fb.type
+    12: teams.fb.action
+    14: teams.wrs
+    15: teams.wrs.level
+    16: teams.wrs.exception
+    17: teams.wrs.action_state
+    19: teams.va
+    20: teams.va.monitor
+    21: teams.va.action_state

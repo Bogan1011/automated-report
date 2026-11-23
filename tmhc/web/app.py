@@ -44,6 +44,7 @@ EVIDENCE_EXT = {".docx", ".zip", ".csv", ".cmpolicy", ".xml"}
 PRODUCT_INFO = OrderedDict([
     ("SEP", {"name": "Standard Endpoint Protection", "rules": "apexone_sep"}),
     ("SWP", {"name": "Server & Workload Protection", "rules": "swp"}),
+    ("CECP", {"name": "Cloud Email and Collaboration Protection", "rules": "cecp"}),
 ])
 PRODUCTS = [v["name"] for v in PRODUCT_INFO.values()]
 BUILD_RE = re.compile(r"\d+\.\d+\.\d+(\.\d+)?")
@@ -52,11 +53,12 @@ BUILD_FIELDS = {
     "SEP": [("latest_agent_build", "Latest Apex One agent build", "14.0.20958")],
     "SWP": [("latest_dsa_windows", "Latest Windows agent build", "20.0.3.29020"),
             ("latest_dsa_linux", "Latest Linux agent build", "20.0.3.28120")],
+    "CECP": [],                     # SaaS - no agents
 }
 
 
 def product_short(prof_or_name) -> str:
-    """'SEP' / 'SWP' from a profile dict or a product name."""
+    """'SEP' / 'SWP' / 'CECP' from a profile dict or a product name."""
     if isinstance(prof_or_name, dict):
         rules = str((prof_or_name.get("options") or {}).get("rules", ""))
         for k, v in PRODUCT_INFO.items():
@@ -66,6 +68,8 @@ def product_short(prof_or_name) -> str:
     for k, v in PRODUCT_INFO.items():
         if str(prof_or_name).strip().lower() in (v["name"].lower(), k.lower()):
             return k
+    if re.search(r"\b(cas|cloud app security|email and collaboration)\b", str(prof_or_name), re.I):
+        return "CECP"                       # the product's former name
     return "SEP"
 
 
@@ -186,7 +190,14 @@ def _check_evidence(folder: Path, zip_password: str, short: str = "SEP") -> list
                     z.read(enc[0], pwd=zip_password.encode() if zip_password else None)
             notes.append(f"ok: logs zip opened ({len(names)} files)")
             base = [Path(n).name.lower() for n in names]
-            if short == "SWP":
+            if short == "CECP":
+                csvs = [n for n in names if n.lower().endswith(".csv")]
+                pdfs = [n for n in names if n.lower().endswith(".pdf")]
+                notes.append(f"ok: detection log found ({Path(csvs[0]).name})" if csvs else
+                             "warning: no detection log CSV (result.csv) - the detection charts will be missing")
+                notes.append(f"ok: monthly report PDF found ({Path(pdfs[0]).name[:60]})" if pdfs else
+                             "note: no monthly report PDF - total items scanned and the scan panel will be missing")
+            elif short == "SWP":
                 xml = [n for n in names if n.lower().endswith(".xml")]
                 notes.append("ok: Computers.csv found" if any(b.startswith("computers") and b.endswith(".csv")
                                                              for b in base) else

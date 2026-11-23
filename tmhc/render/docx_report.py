@@ -94,9 +94,85 @@ def swp_findings(hc: HealthCheck) -> list[str]:
     return out
 
 
+CECP_EXEC_SKIP = ("asp.act_unusual", "ms.unscannable_ok", "wrs.exception")
+
+
+def _cecp_subs(gaps: list[Gap], m: dict) -> list[str]:
+    """Short sub-bullets for one policy block of the CECP executive summary."""
+    out: list[str] = []
+    base = {g.key.split(".", 1)[1] if g.key and "." in g.key else (g.key or ""): g for g in gaps}
+    done: set[str] = set()
+    for g in gaps:
+        k = g.key.split(".", 1)[1] if g.key and "." in g.key else (g.key or "")
+        exo = (g.key or "").startswith("exo.")
+        if k in done or k.endswith(CECP_EXEC_SKIP):
+            continue
+        if k == "apply_all":
+            out.append(f"{m.get('exo_incoming_modules_bold') or 'Some modules'} are currently applied only to "
+                       f"**incoming messages.**")
+        elif k in ("asp.susp_sender", "asp.other_signals"):
+            names = [n for kk, n in (("asp.susp_sender", "Suspicious Senders"),
+                                     ("asp.other_signals", "Other Unusual Signals")) if kk in base]
+            done.update(("asp.susp_sender", "asp.other_signals"))
+            out.append("In Advanced Spam Protection " + " and ".join(f"**{n}**" for n in names) +
+                       (" are disabled." if len(names) > 1 else " is disabled."))
+            continue
+        elif k in ("ms.ac_office", "ms.ac_other"):
+            done.update(("ms.ac_office", "ms.ac_other"))
+            out.append("In Malware Scanning **Active Content** detection is disabled.")
+            continue
+        elif k == "fb":
+            out.append("**File Blocking** is disabled." if exo else "File Blocking is disabled.")
+        elif k == "wrs.toc":
+            out.append("In Web Reputation **Time Of Click** is disabled.")
+        elif k == "monitor_only":
+            out.append("Policy is in Monitor Only Mode.")
+        else:
+            out.append(_headline(g.text))
+        done.add(k)
+    return out
+
+
+def cecp_findings(hc: HealthCheck) -> list[str]:
+    """Executive-summary bullets for CECP; lines starting with a tab are sub-bullets."""
+    m, f = hc.metrics, hc.get
+    out: list[str] = []
+    exp, seats = f("license.expiry"), f("license.seats")
+    if exp:
+        prod = m.get("license_product") or "Email and Collaboration Security"
+        units = f" with **{seats.display}** units" if seats else ""
+        when = m.get("license_valid_long") or _pretty_date(exp.value)
+        out.append(f"**TrendAI {prod}** License{units} valid till  **{when}**.")
+    if m.get("services_sentence"):
+        verb = "are" if len(m.get("services_list") or []) > 1 else "is"
+        out.append(f"{m['services_sentence']} {verb} configured in TrendAI Cloud Email and Collaboration Protection.")
+    dlp = f("cecp.dlp_any")
+    if dlp is not None and not dlp.value:
+        out.append("DLP Policies are disabled for all of the services.")
+    out.extend(x for x in hc.summaries if x not in out)
+    blocks: list[tuple[Gap, list[Gap]]] = []
+    for g in hc.gaps_policy:
+        if g.heading:
+            blocks.append((g, []))
+        elif blocks:
+            blocks[-1][1].append(g)
+    for head, gaps in blocks:
+        subs = _cecp_subs(gaps, m)
+        if not subs:
+            continue
+        title = head.text.rstrip(" :")
+        if title.startswith("In Exchange Online - "):
+            title = "Exchange Online \u2013 " + title[len("In Exchange Online - "):]
+        out.append(f"**{title}:**")
+        out.extend("\t" + x for x in subs)
+    return out
+
+
 def executive_findings(hc: HealthCheck, short: str = "SEP") -> list[str]:
     if short == "SWP":
         return swp_findings(hc)
+    if short == "CECP":
+        return cecp_findings(hc)
     return _sep_findings(hc)
 
 
@@ -221,7 +297,23 @@ def fill_exec_summary(doc, product: str, findings: list[str]) -> None:
     tr = table._tbl.findall(qn("w:tr"))[1]
     cells = _tcs(tr)
     set_cell_text(cells[0], product)
-    set_cell_text(cells[-1], "\n".join(findings) if findings else "No findings.")
+    cell = cells[-1]
+    paras = cell.findall(qn("w:p"))
+    sub = next((p for p in paras if "{{EXEC_SUB}}" in "".join(t.text or "" for t in p.iter(qn("w:t")))), None)
+    if sub is None:
+        set_cell_text(cell, "\n".join(x.lstrip("\t") for x in findings) if findings else "No findings.")
+        return
+    from .docx_utils import _fill_paragraph
+    main = next(p for p in paras if p is not sub)
+    anchor = main
+    for line in findings or ["No findings."]:
+        proto = sub if line.startswith("\t") else main
+        p = copy.deepcopy(proto)
+        _fill_paragraph(p, line.lstrip("\t"), None)
+        anchor.addnext(p)
+        anchor = p
+    for p in paras:
+        cell.remove(p)
 
 
 # --------------------------------------------------------------------------
@@ -229,7 +321,7 @@ def fill_exec_summary(doc, product: str, findings: list[str]) -> None:
 # --------------------------------------------------------------------------
 _SEVERITY = [Status.CRITICAL, Status.CONCERN, Status.UNKNOWN, Status.INFO, Status.GOOD]
 BOLD_VALUE_PREFIXES = ("policy.priv.", "policy.svc.")
-BOLD_LABEL_SUFFIXES = (".actions",)          # "**Virus:** Clean" (SWP remediation actions)
+BOLD_LABEL_SUFFIXES = (".actions", ".act_unusual")          # "**Virus:** Clean" (SWP remediation actions)
 _TOKEN = re.compile(r"^\{\{([=?])([A-Za-z0-9_.|]+)\}\}$")
 
 
@@ -277,9 +369,106 @@ def fill_token_tables(doc, hc: HealthCheck) -> int:
 
 
 # --------------------------------------------------------------------------
+# CECP detections section
+# --------------------------------------------------------------------------
+CHART_WIDTH = Emu(3852000)          # the analysts' chart size
+THREAT_ORDER = ["Ransomware", "Malicious files", "Malicious URLs", "Phishing", "Spam/Graymail", "BEC",
+                "Scam", "Anomalies", "Data Loss Prevention"]
+
+
+def threat_charts(ttype: str, info: dict) -> list[tuple[str, list, bool]]:
+    """(title, items, vertical) for each chart of a threat block, as in the analysts' reports."""
+    charts: list[tuple[str, list, bool]] = []
+    low = ttype.lower()
+    if "url" in low and info.get("urls"):
+        charts.append((f"URL Detected in {ttype}", info["urls"][:5], True))
+    elif low.startswith("spam"):
+        if info.get("senders"):
+            charts.append((f"Top {len(info['senders'])} Sender in {ttype}", info["senders"], False))
+        if info.get("recipients"):
+            charts.append((f"Top {len(info['recipients'])} Recipient in {ttype}", info["recipients"], False))
+    else:
+        if info.get("senders") and low in ("phishing", "bec", "scam"):
+            charts.append((f"Sender/Source of {ttype} Detection", info["senders"], False))
+        if info.get("users"):
+            charts.append((f"Affected User in {ttype}", info["users"], False))
+    if info.get("actions"):
+        charts.append(("Action", info["actions"], None))
+    return charts
+
+
+def _para_text(p) -> str:
+    return "".join(t.text or "" for t in p.iter(qn("w:t")))
+
+
+def _cecp_detections(doc, hc: HealthCheck) -> None:
+    from docx.text.paragraph import Paragraph
+    from ..sources import cecp_exports
+    from .charts import dark_bar_png, dark_pie_png
+    import io
+
+    m = hc.metrics
+    panel = m.get("_total_panel_png")
+    if panel:
+        _replace_picture_after(doc, "The total number of Items scanned", panel)
+    counts = sorted((m.get("threat_counts") or {}).items(), key=lambda kv: -kv[1])
+    if counts:
+        png = dark_bar_png(f"Threat Detected in {m.get('month_name', '')}".strip(), counts)
+        if png:
+            _replace_picture_after(doc, "Over-all Threat Detection summary", png)
+
+    body = doc.element.body
+    protos = {}
+    for p in body.iter(qn("w:p")):
+        t = _para_text(p).strip()
+        if t in ("{{THREAT_HEADING}}", "{{THREAT_COUNT}}", "{{THREAT_PIC}}", "{{THREAT_ACTION}}"):
+            protos[t] = p
+    if len(protos) < 4:
+        return
+    head, count, pic, action = (protos[k] for k in ("{{THREAT_HEADING}}", "{{THREAT_COUNT}}",
+                                                    "{{THREAT_PIC}}", "{{THREAT_ACTION}}"))
+    anchor = head.getprevious()
+    from .docx_utils import _fill_paragraph
+
+    def put(proto, text):
+        nonlocal anchor
+        el = copy.deepcopy(proto)
+        _fill_paragraph(el, text, None)
+        anchor.addnext(el)
+        anchor = el
+        return el
+
+    threats = m.get("threats") or {}
+    order = [t for t in THREAT_ORDER if t in threats] + [t for t in threats if t not in THREAT_ORDER]
+    if not order:
+        put(count, f"No threats were detected from {m.get('period_from', 'N/A')} to {m.get('period_to', 'N/A')}."
+            if m.get("period_from") else "No detection log was provided.")
+    for ttype in order:
+        info = threats[ttype]
+        put(head, f"{ttype} Detections")
+        put(count, cecp_exports.count_sentence(ttype, info, m))
+        for title, items, vertical in threat_charts(ttype, info):
+            png = dark_pie_png(title, items) if vertical is None else dark_bar_png(title, items, vertical=vertical)
+            if not png:
+                continue
+            el = copy.deepcopy(pic)
+            for r in el.findall(qn("w:r")):
+                el.remove(r)
+            anchor.addnext(el)
+            anchor = el
+            Paragraph(el, doc._body).add_run().add_picture(io.BytesIO(png), width=CHART_WIDTH)
+        line = cecp_exports.action_sentence(ttype, info)
+        if line:
+            put(action, line)
+    for p in (head, count, pic, action):
+        body.remove(p)
+
+
+# --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
-EXEC_LABEL = {"SWP": "Vision one Server and workload security"}
+EXEC_LABEL = {"SWP": "Vision one Server and workload security",
+              "CECP": "TrendAI Cloud Email and Collaboration Protection"}
 
 
 def _replace_picture_after(doc, marker: str, png: bytes) -> bool:
@@ -308,8 +497,12 @@ def render(hc: HealthCheck, out_path: str | Path, template: str | Path = DEFAULT
         fill_settings_table(doc, "{{POLICY_TABLE}}", hc.rows_policy)
     else:
         fill_token_tables(doc, hc)
-    fill_gap_table(doc, "{{SERVER_GAPS}}", hc.gaps_server)
-    fill_gap_table(doc, "{{POLICY_GAPS}}", hc.gaps_policy)
+    if short == "CECP":                      # one gap table: global gaps, then per policy
+        fill_gap_table(doc, "{{SERVER_GAPS}}", hc.gaps_server + hc.gaps_policy)
+        _cecp_detections(doc, hc)
+    else:
+        fill_gap_table(doc, "{{SERVER_GAPS}}", hc.gaps_server)
+        fill_gap_table(doc, "{{POLICY_GAPS}}", hc.gaps_policy)
 
     mapping = {
         "{{client_name}}": hc.client_name,
@@ -330,6 +523,10 @@ def render(hc: HealthCheck, out_path: str | Path, template: str | Path = DEFAULT
     except ValueError:
         pass
     mapping["{{check_date_long}}"] = _ordinal(chk) if chk else (hc.check_date_display or hc.check_date)
+    mapping["{{check_date_short}}"] = chk.strftime("%d %b %Y") if chk else (hc.check_date_display or hc.check_date)
+    if short == "CECP":
+        for k in ("period_from", "period_to", "month_abbr", "total_scans_text"):
+            mapping["{{m." + k + "}}"] = "N/A"
     if short == "SWP":
         risky = hc.metrics.get("risky_extensions") or []
         mapping["{{m.risky_ext_text}}"] = (

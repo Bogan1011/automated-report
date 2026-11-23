@@ -218,6 +218,40 @@ class Page:
         return {"on": on, "blue": round(roi_blue, 2), "centre": round(centre_diff, 1), "conf": conf,
                 "margin": round(float(margin), 2), "x": x0 + cx}
 
+    def toggle_left_of(self, m: Match, search: int = 75) -> Optional[dict]:
+        """Pill-shaped switch immediately left of a label (Cloud Email and
+        Collaboration Protection): blue with the knob right = on, grey = off."""
+        import cv2
+        import numpy as np
+
+        cy = int(m.y + m.h / 2)
+        x0, x1 = max(0, int(m.x) - search), max(0, int(m.x) - 1)
+        y0, y1 = max(0, cy - 13), min(self.img.shape[0], cy + 14)
+        win = self.img[y0:y1, x0:x1]
+        if win.size == 0 or win.shape[1] < 12:
+            return None
+        g = cv2.cvtColor(win, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        hsv = cv2.cvtColor(win, cv2.COLOR_BGR2HSV)
+        bgv = int(np.median(g))
+        mask = (np.abs(g - bgv) > 22).astype(np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        n, _, st, _ = cv2.connectedComponentsWithStats(mask, 8)
+        cands = []
+        for i in range(1, n):
+            x, y, w, h, a = (int(v) for v in st[i])
+            if (8 <= h <= 22 and 21 <= w and 1.4 * h <= w <= 3.4 * h and a / float(w * h) > 0.45
+                    and x0 + x + w >= m.x - 28):          # right next to the label
+                cands.append((x + w, x, y, w, h))
+        if not cands:
+            return None
+        _, x, y, w, h = max(cands)                     # the one nearest the label
+        sat = hsv[y:y + h, x:x + w, 1].astype(np.float32)
+        hue = hsv[y:y + h, x:x + w, 0]
+        blue = float(((hue > 95) & (hue < 130) & (sat > 90)).mean())
+        on = blue > 0.25
+        conf = 0.95 if (blue > 0.4 or blue < 0.08) else 0.75
+        return {"on": on, "blue": round(blue, 2), "conf": conf, "x": x0 + x, "w": w}
+
     def toggles_below(self, header: Match, width: int = 90) -> list[dict]:
         """Toggle switches in the column under a header such as 'Status'."""
         import cv2
@@ -458,34 +492,46 @@ def _radio_ordered(page: Page, spec: dict, key: str) -> Optional[dict]:
     """Radio buttons in a fixed vertical order, read by position.
 
     OCR often drops the text of the selected option (the filled radio is
-    read as a glyph and swallows the word), so options found by text only
-    fix the radio column and the row spacing; every option's row is then
-    probed at its expected position.
+    read as a glyph and swallows the word), so options found by text fix the
+    row positions and the radio column (from any option whose radio was
+    seen); every option's row is then probed at that column.
     """
     opts = spec["options"]
-    found = []
+    rows: dict[int, Match] = {}
+    ctrls = []
     for i, opt in enumerate(opts):
-        for m in page.find_all(opt["label"], opt.get("min_score", 85))[:2]:
-            if not _in_band(page, m, spec):
-                continue
-            c = _probe(page, m)
-            if c is not None:
-                found.append((i, m, c))
+        # `alt`: the same option without its first word (the selected radio
+        # often swallows it: "(@)medium Applies to..." read as "Applies to...")
+        for label in [opt["label"]] + list(opt.get("alt", [])):
+            hit = None
+            for m in page.find_all(label, opt.get("min_score", 85))[:2]:
+                if not _in_band(page, m, spec):
+                    continue
+                if any(abs(m.y - o.y) < 6 for o in rows.values()):
+                    continue                        # same row already taken by another option
+                hit = m
                 break
-    if len(found) < 2:
+            if hit is None:
+                continue
+            rows[i] = hit
+            c = _probe(page, hit)
+            if c is not None:
+                ctrls.append(c)
+            break
+    if len(rows) < 2 or not ctrls:
         return None
-    found.sort(key=lambda f: f[0])
-    (i0, m0, c0), (i1, m1, _) = found[0], found[-1]
-    if i1 == i0:
-        return None
+    order = sorted(rows)
+    i0, i1 = order[0], order[-1]
+    m0, m1 = rows[i0], rows[i1]
     step = (m1.y - m0.y) / (i1 - i0)
     if step < 10:                                   # rows must be stacked vertically
         return None
-    col_x = min(c["x"] for _, _, c in found)
+    col_x = min(c["x"] for c in ctrls)
     states = []
     for i, opt in enumerate(opts):
-        y = m0.y + (i - i0) * step
-        probe = Match(opt["label"], col_x + 14, y, m0.h, col_x + 60, 100, [])
+        y = rows[i].y if i in rows else m0.y + (i - i0) * step
+        h = rows[i].h if i in rows else m0.h
+        probe = Match(opt["label"], col_x + 14, y, h, col_x + 60, 100, [])
         c = page.control_left_of(probe, search=20)
         states.append(c["on"] if c else None)
     on = [i for i, st in enumerate(states) if st]
@@ -639,6 +685,81 @@ def _value_list(page: Page, spec: dict, key: str) -> Optional[dict]:
     return _result(key, display, display, 0.85 * spec.get("trust", 1.0) * share, "; ".join(quotes)[:200])
 
 
+def _segments(page: Page, label: str, min_score: float) -> list[Match]:
+    """Every place a label occurs, several per OCR line allowed.
+
+    `Page.find_all` keeps the best match per line, but a side menu entry and
+    the setting it opens are often read as one line ("File Blocking  GD File
+    Blocking"); the setting is then the second occurrence.
+    """
+    from rapidfuzz import fuzz
+    target, n = label.lower(), len(label.split())
+    out: list[Match] = []
+    for ln in page.lines:
+        cands = []
+        for i in range(len(ln)):
+            for j in range(i + max(1, n - 1), min(len(ln), i + n + 1) + 1):
+                seg = ln[i:j]
+                txt = " ".join(w.t for w in seg)
+                sc = fuzz.ratio(target, txt.lower())
+                if len(label) > 30 and len(txt) > 0.55 * len(label):
+                    sc = max(sc, fuzz.partial_ratio(target, txt.lower()) - 3)
+                if sc >= min_score:
+                    cands.append((sc, i, j, seg, txt))
+        used: set[int] = set()
+        for sc, i, j, seg, txt in sorted(cands, key=lambda c: -c[0]):
+            if used & set(range(i, j)):
+                continue
+            used |= set(range(i, j))
+            out.append(Match(txt, seg[0].x, min(w.y for w in seg), max(w.y + w.h for w in seg) - min(w.y for w in seg),
+                             max(w.x + w.w for w in seg), sc, ln))
+    return sorted(out, key=lambda m: (-m.score, -m.x))
+
+
+def _toggle_near(page: Page, m: Match) -> Optional[dict]:
+    t = page.toggle_left_of(m)
+    if t is None and m.line:
+        # the switch is often read as glyph words ("@®", "GD") or the label's
+        # first words were dropped: walk left over the preceding words
+        x = m.x
+        for w in sorted((w for w in m.line if w.x < m.x - 1), key=lambda w: -w.x):
+            if x - (w.x + w.w) > 40:
+                break
+            t = page.toggle_left_of(Match(m.text, w.x, m.y, m.h, m.right, m.score, m.line))
+            if t is not None:
+                break
+            x = w.x
+    return t
+
+
+def _toggle(page: Page, spec: dict, key: str) -> Optional[dict]:
+    """On/off switch drawn left of its label (`when_on` / `when_off` wording)."""
+    found = [m for m in _segments(page, spec["label"], spec.get("min_score", 82)) if _in_band(page, m, spec)]
+    if "nth" in spec:
+        found = sorted(found, key=lambda m: m.y)[spec["nth"]:spec["nth"] + 1]
+    best = None
+    for m in found[:8]:
+        t, kind = _toggle_near(page, m), 2
+        if t is None and spec.get("checkbox", True):
+            t, kind = _probe(page, m), 1           # some options are plain checkboxes
+        if t is None:
+            continue
+        # the setting's own label stands alone on its row; the same words in
+        # a help sentence ("...using computer vision techniques") do not
+        row = " ".join(w.t for w in (m.line or []) if w.x >= m.x - 60) or m.text
+        rank = (kind, round(t["conf"], 1), -max(0, len(row) - len(m.text) - 6), m.score)
+        if best is None or rank > best[0]:
+            best = (rank, m, t)
+    if best:
+        _, m, t = best
+        on = t["on"]
+        display = spec.get("when_on", "Enabled") if on else spec.get("when_off", "Disabled")
+        value = spec.get("value_on", on) if on else spec.get("value_off", on)
+        conf = t["conf"] * (m.score / 100) * spec.get("trust", 1.0)
+        return _result(key, value, display, conf, f"{'(on)' if on else '(off)'} {m.text}")
+    return None
+
+
 def _toggles(page: Page, spec: dict, key: str) -> Optional[dict]:
     hdr = page.find_all(spec.get("column", "Status"), 85)
     if not hdr:
@@ -692,17 +813,23 @@ def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
     rows = []
     for i, line in enumerate(lines):
         ds = dates(line, ordered[i])
-        if not ds or not re.search(r"\b(Paid|Trial|Evaluation|Free)\b", line):
+        typed = re.search(r"\b(Paid|Trial|Evaluation|Free)\b", line) or any(
+            re.fullmatch(r"\W*(Paid|Trial|Evaluation|Free)\W*", prev) for prev in lines[max(0, i - 2):i])
+        if not ds or not typed:
             continue
         name, units = clean_name(line), None
         sub = None
         if re.search(r"\bMultiple\b", line) or first_int(line.split(" Paid ")[-1]) is None:
             # credit licence: allocation rows follow, without dates
-            for nxt in lines[i + 1:i + 6]:
+            for j, nxt in enumerate(lines[i + 1:i + 7], start=i + 1):
                 if dates(nxt):
                     break
                 if row_re.search(nxt) and first_int(nxt):
                     sub = nxt
+                    break
+                if row_re.search(nxt) and j + 1 < len(lines) and first_int(lines[j + 1]) \
+                        and not dates(lines[j + 1]) and not re.search(r"[A-Za-z]{3}", lines[j + 1]):
+                    sub = f"{nxt} {lines[j + 1]}"        # units read on the row below the name
                     break
         if sub:
             units = first_int(sub)
@@ -722,6 +849,10 @@ def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
         out.append(_result(f"{key_prefix}.seats", units, str(units), 0.85, line))
     if name:
         out.append(_result(f"{key_prefix}.name", name, name, 0.8, line))
+    if " / " in line:                               # credit licence: the product row underneath
+        product = re.split(r"\s+\d", line.split(" / ", 1)[1])[0].strip()
+        product = re.sub(r"^\W+", "", product)
+        out.append(_result(f"{key_prefix}.product", product, product, 0.8, line))
     others = [r for r in rows if r[0] < expiry]
     if others:
         out.append(_result(f"{key_prefix}.expired_others", len(others),
@@ -768,7 +899,7 @@ def _reread_date(page: Page, w: Word) -> Optional[tuple]:
     return None
 
 
-KINDS = {"checkbox": _checkbox, "all_checked": _all_checked, "radio": _radio,
+KINDS = {"toggle": _toggle, "checkbox": _checkbox, "all_checked": _all_checked, "radio": _radio,
          "radio_rows": _radio_rows, "text": _text, "toggles": _toggles, "number_box": _number_box,
          "radio_ordered": _radio_ordered, "value_right": _value_right, "value_list": _value_list}
 

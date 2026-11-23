@@ -1,0 +1,422 @@
+# ---------------------------------------------------------------------------
+# OCR field specs for the Cloud Email and Collaboration Protection (CECP,
+# formerly Cloud App Security / CAS) health check. Same format as
+# swp_ocr.yaml, plus:
+#
+#   kind toggle    the blue/grey switch drawn left of a label (falls back to
+#                  a checkbox left of the label)
+#   {p} in a key   the protected service the policy page belongs to:
+#                  exo (Exchange Online), spo (SharePoint Online),
+#                  odb (OneDrive), teams (Microsoft Teams)
+#
+# The breadcrumb "ATP Policy for <service>" decides the service; the label
+# typed above the screenshot ("Ms sharepoint", "Va teams") is the fallback.
+# Calibrated on a real engagement (Oct 2026, 72 screenshots).
+# ---------------------------------------------------------------------------
+ocr:
+  stretch: [20, 90]
+  scale: 2
+  checkbox_style: fill
+
+scopes:
+  p:
+    exo:
+      head: ["ATP Policy for Exchange"]
+      section: ["exchange"]
+    spo:
+      head: ["ATP Policy for SharePoint"]
+      section: ["sharepoint"]
+    odb:
+      head: ["ATP Policy for OneDrive"]
+      section: ["onedrive"]
+    teams:
+      head: ["ATP Policy for Microsoft Teams", "ATP Policy for Teams"]
+      section: ["teams"]
+
+vocab_actions: &actions
+  - Move to Junk Email folder
+  - Quarantine
+  - Pass
+  - Delete
+  - Tag subject
+  - Add disclaimer
+  - Replace with text/file
+  - Sanitize file
+  - Block
+  - Allow
+
+fields:
+
+  # ---------------- Vision One platform ---------------------------------------
+  license:
+    page: ["License Information", "Credit conversion", "Expiration date"]
+    kind: license
+    pass: plain
+    row_re: "Email and Collaboration|Cloud App Security|Collaboration Protection"
+
+  cecp.user_count:
+    page: ["managed email accounts", "EMAIL ACCOUNT INVENTORY"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "All managed email accounts\\s+(\\d[\\d,]*)", value: "{1}", display: "{1}"}
+
+  # ---------------- Service status ----------------------------------------------
+  cecp.svc.exo:
+    page: ["EMAIL SERVICES", "Service Status"]
+    kind: value_right
+    label: Exchange Online
+    nth: 0
+    map:
+      - {re: "Completed", display: Configured, value: true}
+      - {re: "Not started|Grant Access|Expired|Failed", display: Not configured, value: false}
+  cecp.svc.odb:
+    page: ["COLLABORATION SERVICES", "Service Status"]
+    kind: value_right
+    label: OneDrive
+    map:
+      - {re: "Completed", display: Configured, value: true}
+      - {re: "Not started|Grant Access|Expired|Failed", display: Not configured, value: false}
+  cecp.svc.spo:
+    page: ["COLLABORATION SERVICES", "Service Status"]
+    kind: value_right
+    label: SharePoint Online
+    map:
+      - {re: "Completed", display: Configured, value: true}
+      - {re: "Not started|Grant Access|Expired|Failed", display: Not configured, value: false}
+  cecp.svc.teams:
+    page: ["COLLABORATION SERVICES", "Service Status"]
+    kind: value_right
+    label: Microsoft Teams
+    nth: 0
+    map:
+      - {re: "Completed", display: Configured, value: true}
+      - {re: "Not started|Grant Access|Expired|Failed", display: Not configured, value: false}
+
+  # ---------------- Global settings ---------------------------------------------
+  cecp.lists.approved_header:
+    page: ["Approved Header Fields", "Approved Users"]
+    kind: toggle
+    label: Approved Header Field List
+    when_on: Configured
+    when_off: Not configured
+  cecp.lists.blocked:
+    page: ["Blocked Lists for Exchange Online", "Blocked SHA"]
+    kind: toggle
+    label: Blocked Lists
+    when_on: Configured
+    when_off: Not configured
+  cecp.hp_domain:
+    page: ["High profile domains are used", "Exception Domains"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "(?m)^\\s*(?!.*example)(?:[|\\[(]\\s*)?([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})\\s*$", value: true, display: Configured}
+    default: {value: false, display: Not configured}
+  cecp.hp_user:
+    page_all: ["Writing Style Training Status"]
+    kind: text
+    patterns:
+      - {re: "@[a-z0-9-]+(?:\\.[a-z0-9-]+)+", value: true, display: Configured}
+    default: {value: false, display: Not configured}
+  cecp.internal_domain:
+    page: ["Internal domains are used to distinguish"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "(?m)^\\s*(?!.*example)(?:\\w{1,4}\\s+)*?([a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})\\s*$", value: true, display: Configured}
+    default: {value: false, display: Not configured}
+  cecp.suspicious_objects:
+    page: ["Latest synchronized time", "Suspicious Object lists"]
+    kind: toggle
+    label: Suspicious Object List
+  cecp.pwd_guess:
+    page: ["attempts to find passwords"]
+    kind: toggle
+    label: Attachment Password Guessing
+  cecp.pwd_rules:
+    page: ["attempts to find passwords"]
+    kind: text
+    patterns:
+      - {re: "Subsequent Text[^\\n]*\\n[^\\n]*(?:\\\\[sdwSDW]|\\(\\?|\\[\\^|\\.\\*|\\\\\\.)", value: true, display: Configured}
+    default: {value: false, display: Not configured}
+  cecp.dlp.exo:
+    page_all: ["DLP Policy", "Exchange Online Policies"]
+    kind: toggles
+    column: Status
+  cecp.dlp.collab:
+    page_all: ["DLP Policy", "SharePoint Online Policies"]
+    kind: toggles
+    column: Status
+
+  # ---------------- ATP policy: General -------------------------------------------
+  "{p}.name":
+    page: ["synchronize your targets"]
+    kind: value_right
+    label: "Policy Name:"
+    min_score: 75
+    pass: plain
+    max_x: 700
+  "{p}.target":
+    page: ["synchronize your targets"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "Selected Targets[\\s\\S]{0,160}?\\b(All (?:Users|Sites|Teams))", dotall: true, value: "{1}", display: "{1}"}
+    default: {value: Specific targets, display: Specific targets}
+  "{p}.description":
+    page: ["synchronize your targets"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "monitor mode|monitor only|fixed to PASS", value: true, display: Monitor only}
+    default: {value: false, display: Enforced}
+  exo.skip_junk:
+    page: ["Do not scan the Junk Email folder"]
+    kind: checkbox
+    label: Do not scan the Junk Email folder
+    min_score: 80
+
+  # ---------------- Advanced Spam Protection (Exchange) ------------------------------
+  exo.asp:
+    page: ["Detection Level", "Enhanced BEC Detection"]
+    kind: toggle
+    label: Advanced Spam Protection
+  exo.asp.collect:
+    page: ["Detection Level", "Enhanced BEC Detection"]
+    kind: toggle
+    label: collect suspicious email information to improve its detection capabilities
+    min_score: 70
+  exo.asp.apply:
+    page: ["Detection Level"]
+    kind: value_right
+    label: "Apply to:"
+    max_x: 720
+    map: &apply_map
+      - {re: "Incoming", display: Incoming Messages, value: Incoming}
+      - {re: "Outgoing", display: Outgoing Messages, value: Outgoing}
+      - {re: "Internal", display: Internal Messages, value: Internal}
+      - {re: "All", display: All Messages, value: All}
+  exo.asp.level:
+    page: ["Detection Level"]
+    kind: radio_ordered
+    options:
+      - {label: "high Detects the most spam with a greater", alt: ["Detects the most spam with a greater chance"], display: High}
+      - {label: "medium Detects a high rate of spam with", alt: ["Detects a high rate of spam with a moderate chance"], display: Medium}
+      - {label: "low Detects obvious spam with the lowest", alt: ["Detects obvious spam with the lowest chance"], display: Low}
+  exo.asp.susp_sender:
+    page: ["Check for external senders with any of the following"]
+    kind: all_checked
+    labels:
+      - "The sender's display name matches the High Profile Users list"
+      - "The sender has not sent any email in at least the past 30 days"
+  exo.asp.other_signals:
+    page: ["Check for other unusual behavior or traits in emails"]
+    kind: checkbox
+    label: Check for other unusual behavior or traits in emails
+    min_score: 78
+  exo.asp.dns:
+    page: ["Display Name Spoofing Detection"]
+    kind: toggle
+    label: Display Name Spoofing Detection
+  exo.asp.retro:
+    page: ["Graymail Detection"]
+    kind: toggle
+    label: Retro Scan & Auto Remediate
+  exo.asp.graymail:
+    page: ["Graymail Detection"]
+    kind: toggle
+    label: Graymail Detection
+  exo.asp.bec:
+    page: ["Writing Style Analysis for BEC"]
+    kind: toggle
+    label: Writing Style Analysis for BEC
+  exo.asp.actions:
+    page_all: ["Unusual signal", "Graymail"]
+    kind: value_list
+    vocab: *actions
+    items:
+      - {label: Spam, name: Spam, max_x: 620}
+      - {label: Malicious content, max_x: 620}
+      - {label: Graymail, max_x: 620}
+      - {label: Scam, max_x: 620}
+      - {label: BEC, max_x: 620}
+      - {label: Phishing, max_x: 620}
+      - {label: Ransomware, max_x: 620}
+      - {label: "Blocked sender/header...", name: Blocked sender/header, max_x: 620}
+      - {label: Unusual signal, max_x: 620}
+  exo.asp.act_unusual:
+    page_all: ["Unusual signal", "Graymail", "Threat type"]
+    kind: value_right
+    label: Unusual signal
+    max_x: 620
+    vocab: *actions
+
+  # ---------------- Malware Scanning ------------------------------------------------
+  exo.ms.apply:
+    page: ["Files to scan"]
+    kind: value_right
+    label: "Apply to:"
+    pass: plain
+    max_x: 720
+    map: *apply_map
+  "{p}.ms.files":
+    page: ["Files to scan"]
+    kind: radio_ordered
+    options:
+      - {label: Scan all files, display: Scan all files}
+      - {label: Scan files identified by the true file type, display: Scan files identified by true file type}
+      - {label: Scan selected file types, display: Scan selected file types}
+  "{p}.ms.pml":
+    page: ["Detection Techniques"]
+    kind: toggle
+    label: Enable Predictive Machine Learning
+  exo.ms.body:
+    page: ["Detection Techniques"]
+    kind: toggle
+    label: Scan message body
+  "{p}.ms.intellitrap":
+    page: ["Detection Techniques"]
+    kind: toggle
+    label: Enable IntelliTrap
+  "{p}.ms.collect":
+    page: ["Detection Techniques"]
+    kind: toggle
+    label: collect suspicious file information to improve its detection capabilities
+    min_score: 70
+  exo.ms.ac_office:
+    page: ["Active content"]
+    kind: toggle
+    label: Detect active content in Microsoft Office files
+  exo.ms.ac_other:
+    page: ["Active content"]
+    kind: toggle
+    label: Detect active content in other formats of files
+  exo.ms.actions:
+    page_all: ["Worms / Trojans", "Packed files"]
+    kind: value_list
+    vocab: *actions
+    prefix: "Custom action:"
+    items:
+      - {label: Active content, max_x: 620, optional: true}
+      - {label: Virus, max_x: 620}
+      - {label: Worms / Trojans, max_x: 620}
+      - {label: Packed files, max_x: 620}
+      - {label: Other malicious code, max_x: 620}
+      - {label: Spyware / Grayware, max_x: 620}
+      - {label: Ransomware, max_x: 620}
+      - {label: "Unscannable compress...", name: Unscannable compressed files, max_x: 620}
+      - {label: "Size of the mail attach...", name: Size of file attachments exceeds 150 MB, max_x: 620}
+  exo.ms.act_unscannable:
+    page_all: ["Worms / Trojans", "Packed files"]
+    kind: value_right
+    label: "Unscannable compress..."
+    max_x: 620
+    vocab: *actions
+  exo.ms.act_size:
+    page_all: ["Worms / Trojans", "Packed files"]
+    kind: value_right
+    label: "Size of the mail attach..."
+    max_x: 620
+    vocab: *actions
+
+  # ---------------- File Blocking ------------------------------------------------------
+  "{p}.fb":
+    page: ["Type of File Blocking"]
+    kind: toggle
+    label: File Blocking
+  "{p}.fb.type":
+    page: ["Type of File Blocking"]
+    kind: radio_ordered
+    options:
+      - {label: Block All Files, display: Block All Files}
+      - {label: Block Specific Files, display: Block Specific Files}
+
+  # ---------------- Web Reputation ---------------------------------------------------
+  "{p}.wrs":
+    page: ["Security Level"]
+    kind: toggle
+    label: Web Reputation
+  exo.wrs.apply:
+    page: ["Security Level"]
+    kind: value_right
+    label: "Apply to:"
+    pass: plain
+    max_x: 720
+    map: *apply_map
+  "{p}.wrs.level":
+    page: ["Security Level"]
+    kind: radio_ordered
+    options:
+      - {label: "high Applies to more web threats but", alt: ["Applies to more web threats but increases"], display: High}
+      - {label: "medium Applies to most web threats while", alt: ["Applies to most web threats while keeping"], display: Medium}
+      - {label: "low Applies to fewer web threats but", alt: ["Applies to fewer web threats but reduces"], display: Low}
+  exo.wrs.attach:
+    page: ["Dynamic URL scanning"]
+    kind: toggle
+    label: Message attachments
+  exo.wrs.dynamic:
+    page: ["Dynamic URL scanning"]
+    kind: toggle
+    label: Dynamic URL scanning
+  exo.wrs.cv:
+    page: ["Dynamic URL scanning"]
+    kind: toggle
+    label: Computer Vision
+  exo.wrs.retro:
+    page: ["Dynamic URL scanning"]
+    kind: toggle
+    label: Retro Scan & Auto Remediate
+  exo.wrs.toc:
+    page_all: ["Time-of-click protection", "Dynamic URL scanning"]
+    not_page: ["URLs in this approved list bypass"]
+    kind: toggle
+    label: Time-of-click protection
+  "{p}.wrs.exception":
+    page: ["Approved URL", "Blocked URL List"]
+    not_page: ["URLs in this approved list bypass"]
+    kind: text
+    patterns:
+      - {re: "Approved URL\\w*(?: List)?[^\\n]{0,8}?\\bon\\b", value: true, display: Configured}
+      - {re: "Approved URL\\w*(?: List)?[^\\n]{0,8}?\\bo[ft]{1,2}\\b", value: false, display: Not configured}
+
+  exo.wrs.actions:
+    page_all: ["Risky URLs", "Blocked URL List", "Threat type"]
+    kind: value_list
+    vocab: *actions
+    items:
+      - {label: Risky URLs, max_x: 620}
+      - {label: Blocked URL List, max_x: 620}
+
+  # ---------------- Virtual Analyzer -------------------------------------------------
+  "{p}.va":
+    page: ["Analyze following"]
+    kind: toggle
+    label: Virtual Analyzer
+  "{p}.va.monitor":
+    page: ["Analyze following"]
+    kind: checkbox
+    label: Monitor and log only (monitor mode)
+    min_score: 75
+  exo.va.apply:
+    page: ["Analyze following"]
+    kind: value_right
+    label: "Apply to:"
+    pass: plain
+    max_x: 720
+    map: *apply_map
+  exo.va.actions:
+    page_all: ["Unrated", "Medium risk", "Threat type"]
+    kind: value_list
+    vocab: *actions
+    items:
+      - {label: High risk, name: High Risk, max_x: 620}
+      - {label: Medium risk, name: Medium Risk, max_x: 620}
+      - {label: Low risk, name: Low Risk, max_x: 620}
+      - {label: Unrated, max_x: 620}
+
+  # ---------------- Correlated Intelligence -----------------------------------------
+  exo.ci:
+    page: ["Security Risks", "Customized Anomalies"]
+    kind: toggle
+    label: Correlated Intelligence

@@ -1,0 +1,190 @@
+# ---------------------------------------------------------------------------
+# Rule pack: TrendAI Cloud Email and Collaboration Protection (CECP, formerly
+# Cloud App Security / CAS) health check. Same format as swp.yaml, plus:
+#
+#   only: [exo]      the row / group exists for these policies only
+#   gap_sets         gap table blocks: Exchange on its own, then SharePoint /
+#                    OneDrive / Teams - a gap raised by all three is listed
+#                    once under set_heading, the rest under heading.
+#
+# Statuses follow the analysts' Oct 2026 reports.
+# ---------------------------------------------------------------------------
+
+meta:
+  product: Cloud Email and Collaboration Protection
+  short: CECP
+
+server:
+  title: CECP Health Check Overview
+  groups:
+    - heading: Administration Details
+      rows:
+        - {component: License, recommended: Within term, key: license.expiry, check: date_future, fail: critical,
+           gap: "The license has expired or expiry could not be confirmed ({deployed}). Renew the license to keep protection and updates."}
+        - {component: User Count, recommended: Within term, key: cecp.user_count, check: info}
+        - {component: Services, recommended: As per Client Requirement, key: cecp.services, check: enabled}
+        - {component: Approved/Blocked Lists, recommended: Review, key: cecp.lists, check: info}
+        - {component: High Profile Domain, recommended: Configure, key: cecp.hp_domain, check: enabled,
+           gap: "High Profile Domains are not configured, recommended to add the organization's legitimate sender domains so cousin domains used for spam, phishing and BEC are detected."}
+        - {component: High Profile User, recommended: Configure, key: cecp.hp_user, check: enabled,
+           gap: "High Profile Users are not configured, recommended to add the users most likely to be impersonated (executives, finance) for BEC detection."}
+        - {component: Internal Domain, recommended: Configure, key: cecp.internal_domain, check: enabled,
+           gap: "Internal Domain List is not configured, recommended to add the organization's domains to distinguish incoming email traffic."}
+        - {component: Suspicious Object List, recommended: Enable, key: cecp.suspicious_objects, check: enabled, pass: info,
+           gap: "Suspicious Object List is disabled, recommended to enable it to use the Vision One suspicious URL and file lists during scanning."}
+        - {component: Attachment Password Guessing, recommended: Configure with Password, key: cecp.pwd_guess,
+           display_key: cecp.pwd_display, check: enabled, pass: info,
+           gap: "Attachment Password Guessing is disabled, recommended to enable it so password-protected attachments can be opened and scanned."}
+        - {component: DLP Policy, recommended: Enable, key: cecp.dlp_any, check: enabled, show: false, gap_rank: 1,
+           gap: "DLP Policy is not configured for any of the services, it is recommended to configure at least one DLP policy with Pass action to monitor activity. And, if needed, create a new Policy with Delete or Quarantine action for specific templates after analyzing logs."}
+
+policy:
+  title: Advanced Threat Protection Policy
+  scopes:
+    - {id: exo, name: "{m.exo_policy_name}", default_name: Default Exchange Policy ATP}
+    - {id: spo, name: "{m.spo_policy_name}", default_name: Default SharePoint Online Policy ATP (Monitor Only)}
+    - {id: odb, name: "{m.odb_policy_name}", default_name: Default OneDrive Policy ATP (Monitor Only)}
+    - {id: teams, name: "{m.teams_policy_name}", default_name: Default Microsoft Teams Policy ATP (Monitor Only)}
+  gap_sets:
+    - {scopes: [exo], heading: "In Exchange Online - {name}:"}
+    - {scopes: [spo, odb, teams], set_heading: "In {names}:", heading: "In {name}:"}
+  groups:
+    # ======================== Exchange Online ========================
+    - heading: General
+      only: [exo]
+      rows:
+        - {component: Target, recommended: Target group, key: exo.target, check: {contains: [All]}, fail: info}
+        - {component: Do not scan the Junk Email folder, recommended: Disable, key: exo.skip_junk, check: disabled,
+           gap: "Do not scan the Junk Email folder is enabled, recommended to disable it so messages in the Junk Email folder are also scanned."}
+        - {component: Apply to, recommended: All Messages, key: exo.apply_all, check: enabled, show: false,
+           gap: "{m.exo_incoming_modules} are currently applied only to incoming messages. It is recommended to apply them to all messages to detect threats in incoming, internal, and outbound emails, reducing the risk of malware spread and compromised accounts."}
+    - heading: Advanced Spam Protection
+      only: [exo]
+      rows:
+        - {component: Advanced Spam Protection, recommended: Enable, key: exo.asp, check: enabled, fail: critical,
+           gap: "Advanced Spam Protection is disabled, recommended to enable it to detect spam, phishing, BEC and scam messages."}
+        - {component: Collect Suspicious email, recommended: Enable, key: exo.asp.collect, check: enabled}
+        - {component: Apply to, recommended: All Messages, key: exo.asp.apply, check: {equals: All}, fail: good}
+        - {component: Detection Level, recommended: Medium, key: exo.asp.level, check: {in: [Medium, High]}}
+        - {component: Suspicious Senders, recommended: Enable, key: exo.asp.susp_sender, check: enabled,
+           gap: "In Advanced Spam Protection, Suspicious Senders module is disabled. It is recommended to configure by enabling all the checkboxes to check for external senders with suspicious attributes."}
+        - {component: Other Unusual Signals, recommended: Enable, key: exo.asp.other_signals, check: enabled,
+           gap: "In Advanced Spam Protection, Other Unusual Signals is disabled, and it is recommended to enable the same to determine whether a sender meets the criteria of any unusual signals in the message based on the information collected by TrendAI."}
+        - {component: Display Name Spoofing Detection, recommended: Enable, key: exo.asp.dns, check: enabled,
+           gap: "In Advanced Spam Protection, Display Name Spoofing Detection is disabled, recommended to enable it to detect external senders using a look-alike display name."}
+        - {component: Retro Scan & Auto Remediate, recommended: Enable, key: exo.asp.retro, check: enabled,
+           gap: "In Advanced Spam Protection, Retro Scan & Auto Remediate is disabled, recommended to enable it to rescan historical messages and remediate newly detected threats."}
+        - {component: Graymail Detection, recommended: Enable, key: exo.asp.graymail, check: enabled,
+           gap: "In Advanced Spam Protection, Graymail Detection is disabled, recommended to enable it."}
+        - {component: Writing Style Analysis for BEC, recommended: Enable, key: exo.asp.bec, check: enabled,
+           gap: "In Advanced Spam Protection, Writing Style Analysis for BEC is disabled, recommended to enable it for high profile users."}
+        - {component: Action, recommended: "Spam : Move to Junk Email folder\nMalicious content : Quarantine\nGraymail: Move to Junk Email folder\nScam: Quarantine\nBEC: Quarantine\nPhishing: Quarantine\nRansomware: Quarantine\nBlocked sender/header : Quarantine\nUnusual signal: Tag Subject/ Add Disclaimer",
+           key: exo.asp.act_unusual, display_key: exo.asp.actions, check: {not_in: [Pass]},
+           gap: "Unusual Signal action in Advanced Spam Protection is configured as Pass. It is recommended to configure action as Tag Subject/Add Disclaimer to help users identify messages with potentially suspicious characteristics."}
+    - heading: Malware Scanning
+      only: [exo]
+      rows:
+        - {component: Apply to, recommended: All Messages, key: exo.ms.apply, check: {equals: All},
+           gap: "Malware Scanning is applied only to {deployed_lower}. It is recommended to apply it to all messages."}
+        - {component: Files to scan, recommended: Scan All Files, key: exo.ms.files, check: {contains: all}}
+        - {component: Predictive Machine Learning, recommended: Enable, key: exo.ms.pml, check: enabled,
+           gap: "In Malware Scanning, Predictive Machine Learning is disabled, recommended to enable it."}
+        - {component: Scan message body, recommended: Enable, key: exo.ms.body, check: enabled,
+           gap: "In Malware Scanning, Scan message body is disabled, recommended to enable it."}
+        - {component: IntelliTrap, recommended: Enable, key: exo.ms.intellitrap, check: enabled,
+           gap: "In Malware Scanning, IntelliTrap is disabled, recommended to enable it."}
+        - {component: Collect Suspicious file, recommended: Enable, key: exo.ms.collect, check: enabled}
+        - {component: Detect Active Content in MS Office files, recommended: Enable, key: exo.ms.ac_office, check: enabled,
+           gap: "In Malware Scanning, ‘Detect active content in Microsoft Office files’ is disabled, recommended to enable it which detects active content such as macros in attached Microsoft office files comes in email."}
+        - {component: Detect Active Content in other files, recommended: Enabled, key: exo.ms.ac_other, check: enabled,
+           gap: "In Malware Scanning, ‘Detect active content in other file format’ is disabled, recommended to enable it which detects active content in other attached files in email."}
+        - {component: Action, recommended: TrendAI™ recommended action or Custom, key: exo.ms.actions, check: {contains: [Quarantine, Delete]}}
+        - {component: Unscannable / oversize files, recommended: Quarantine, key: exo.ms.unscannable_ok, check: enabled, show: false,
+           gap: "In Malware Scanning action for Unscannable compressed files and Size of the mail attachment exceeds 150 MB are currently configured as Pass. It is recommended to configure it as Quarantine to prevent any threat from reaching users."}
+    - heading: File Blocking
+      only: [exo]
+      rows:
+        - {component: File Blocking, recommended: Enable, key: exo.fb, check: enabled,
+           gap: "File Blocking is currently disabled, and it is recommended to enable the module to prevent potentially harmful files from entering your environments."}
+        - {component: Apply to, recommended: All Messages, key: exo.fb.apply, check: info}
+        - {component: Type of File Blocking, recommended: Block Specific Files (As per Client Requirement), key: exo.fb.type, check: info}
+        - {component: Action, recommended: Quarantine or Replace with text/file, key: exo.fb.action, check: info}
+    - heading: Web Reputation
+      only: [exo]
+      rows:
+        - {component: Web Reputation, recommended: Enable, key: exo.wrs, check: enabled, fail: critical,
+           gap: "Web Reputation is disabled, recommended to enable it to detect malicious and phishing URLs."}
+        - {component: Apply to, recommended: All Messages, key: exo.wrs.apply, check: {equals: All}}
+        - {component: Security Level, recommended: Medium, key: exo.wrs.level, check: {in: [Medium, High]}, pass: info}
+        - {component: Scan message Attachments, recommended: Enable, key: exo.wrs.attach, check: enabled,
+           gap: "In Web Reputation, scanning of message attachments is disabled, recommended to enable it to find suspicious URLs and QR codes in attachments."}
+        - {component: Dynamic URL scanning, recommended: Enable, key: exo.wrs.dynamic, check: enabled,
+           gap: "In Web Reputation, Dynamic URL scanning is disabled, recommended to enable it to analyze URLs in real time."}
+        - {component: Computer Vision, recommended: Enable, key: exo.wrs.cv, check: enabled,
+           gap: "In Web Reputation, Computer Vision is disabled, recommended to enable it to detect phishing websites."}
+        - {component: Retro Scan & Auto Remediate, recommended: Enable, key: exo.wrs.retro, check: enabled,
+           gap: "In Web Reputation, Retro Scan & Auto Remediate is disabled, recommended to enable it."}
+        - {component: Time of click Protection, recommended: Enable, key: exo.wrs.toc, check: enabled,
+           gap: "In Web Reputation, Time of Click is disabled, it is recommended to enable the same as this feature allows taking actions based on the risk level to protect Exchange Online users against potential risks when users click URLs."}
+        - {component: Exception, recommended: Review, key: exo.wrs.exception, check: disabled, pass: info, fail: info,
+           gap: "There is Exception configured in Web Reputation. It is recommended to review these exceptions and remove any that are no longer necessary."}
+        - {component: Action, recommended: "Risky URLs: Quarantine\nBlocked URL List : Quarantine", key: exo.wrs.actions,
+           check: {contains: [Quarantine, Delete]}}
+    - heading: Virtual Analyzer
+      only: [exo]
+      rows:
+        - {component: Virtual Analyzer, recommended: Enable, key: exo.va, check: enabled,
+           gap: "Virtual Analyzer is disabled, recommended to enable it to analyze suspicious files and URLs in a sandbox."}
+        - {component: Monitor Mode, recommended: Disable, key: exo.va.monitor, check: disabled,
+           gap: "Virtual Analyzer is in monitor mode, recommended to disable monitor mode so the configured actions are taken."}
+        - {component: Apply to, recommended: All Messages, key: exo.va.apply, check: {equals: All}, fail: info}
+        - {component: Action, recommended: "High Risk: Quarantine\nMedium Risk: Quarantine\nLow Risk: Tag Subject\nUnrated: Tag Subject",
+           key: exo.va.actions, check: info}
+    - heading: Correlated Intelligence
+      only: [exo]
+      rows:
+        - {component: Correlated Intelligence, recommended: Enable, key: exo.ci, check: enabled,
+           gap: "Correlated Intelligence is disabled, recommended to enable it to detect advanced attacks by correlating signals across protection layers."}
+
+    # ============ SharePoint Online / OneDrive / Microsoft Teams ============
+    - heading: General
+      only: [spo, odb, teams]
+      rows:
+        - {component: Mode, recommended: Enforced, key: "{p}.monitor_only", check: disabled, show: false, gap_rank: 1,
+           gap: "The policy is configured in Monitor Only mode, allowing all actions to pass without enforcement. It is recommended to configure the policy without Monitor Only mode to enforce the configured security actions and ensure malicious files and content are blocked or quarantined as per the policy settings."}
+        - {component: Target, recommended: Target group, key: "{p}.target", check: {contains: [All]}, fail: info}
+    - heading: Malware Scanning
+      only: [spo, odb, teams]
+      rows:
+        - {component: Files to scan, recommended: Scan All Files, key: "{p}.ms.files", check: {contains: all}}
+        - {component: Predictive Machine Learning, recommended: Enable, key: "{p}.ms.pml", check: enabled,
+           gap: "In Malware Scanning, Predictive Machine Learning is disabled, recommended to enable it."}
+        - {component: IntelliTrap, recommended: Enable, key: "{p}.ms.intellitrap", check: enabled,
+           gap: "In Malware Scanning, IntelliTrap is disabled, recommended to enable it."}
+        - {component: Collect Suspicious file, recommended: Enable, key: "{p}.ms.collect", check: enabled}
+        - {component: Action, recommended: TrendAI™ recommended action or Custom, key: "{p}.ms.action_state",
+           check: {not_in: [Pass]}}
+    - heading: File Blocking
+      only: [spo, odb, teams]
+      rows:
+        - {component: File Blocking, recommended: Enable, key: "{p}.fb", check: enabled,
+           gap: "File Blocking is disabled. It is recommended to enable it to block potentially malicious or unwanted file types, helping prevent harmful files from being shared with or accessed by users."}
+        - {component: Type of File Blocking, recommended: Block Specific Files (As per Client Requirement), key: "{p}.fb.type", check: info}
+        - {component: Action, recommended: Quarantine or Replace with text/file, key: "{p}.fb.action", check: info}
+    - heading: Web Reputation
+      only: [spo, odb, teams]
+      rows:
+        - {component: Web Reputation, recommended: Enable, key: "{p}.wrs", check: enabled, fail: critical,
+           gap: "Web Reputation is disabled, recommended to enable it to detect malicious and phishing URLs in files."}
+        - {component: Security Level, recommended: Medium, key: "{p}.wrs.level", check: {in: [Medium, High]}}
+        - {component: Exception, recommended: Review, key: "{p}.wrs.exception", check: info}
+        - {component: Action, recommended: "Risky URLs: Quarantine\nBlocked URL List : Quarantine", key: "{p}.wrs.action_state",
+           check: {not_in: [Pass]}}
+    - heading: Virtual Analyzer
+      only: [spo, odb, teams]
+      rows:
+        - {component: Virtual Analyzer, recommended: Enable, key: "{p}.va", check: enabled,
+           gap: "Virtual Analyzer is disabled, recommended to enable it to analyze suspicious files in a sandbox."}
+        - {component: Monitor Mode, recommended: Disable, key: "{p}.va.monitor", check: disabled}
+        - {component: Action, recommended: "High Risk: Quarantine\nMedium Risk: Quarantine\nLow Risk: Tag Subject\nUnrated: Tag Subject",
+           key: "{p}.va.action_state", check: {not_in: [Pass]}}

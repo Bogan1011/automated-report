@@ -5,7 +5,7 @@
 <div class="card"><h2>Client details</h2>{% set f = form %}{% include "_details.html" %}</div>
 <div class="card"><h2>Evidence</h2><div class="grid">
 <div class="drop"><label>Screenshots <span class="hint">Word file (.docx) with the console screenshots</span></label><input type="file" name="screenshots_docx" accept=".docx"></div>
-<div class="drop"><label>Logs <span class="hint">{% if short == 'SWP' %}zip with Computers.csv, the policy .xml exports and the IPS / Log Inspection event CSVs{% else %}zip with the .cmpolicy and CSV exports{% endif %}</span></label><input type="file" name="logs_zip" accept=".zip"></div>
+<div class="drop"><label>Logs <span class="hint">{% if short == 'SWP' %}zip with Computers.csv, the policy .xml exports and the IPS / Log Inspection event CSVs{% elif short == 'CECP' %}zip with the detection log export (result.csv) and the monthly report PDF{% else %}zip with the .cmpolicy and CSV exports{% endif %}</span></label><input type="file" name="logs_zip" accept=".zip"></div>
 <div class="drop"><label>Extra exports <span class="hint">optional loose .csv / .cmpolicy / .xml files</span></label><input type="file" name="extra" accept=".csv,.cmpolicy,.xml" multiple></div>
 </div><p class="muted" style="margin:12px 0 0">{% if has_zip_password %}The logs zip is opened with the zip password saved in <a href="/settings">Settings</a>.{% else %}No zip password is saved - set one in <a href="/settings">Settings</a> if your log zips are protected.{% endif %}</p></div>
 <button class="btn">Upload and build report</button></form>{% endblock %}

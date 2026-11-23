@@ -27,7 +27,7 @@ from .engine.evaluate import evaluate, load_rules, status_counts
 from .models import Fact, HealthCheck, Source
 from .render.docx_report import DEFAULT_TEMPLATE, render
 from .render.review import write_review
-from .sources import agentlist, ocr, policy, screenshots, swp_exports, v1logs
+from .sources import agentlist, cecp_exports, ocr, policy, screenshots, swp_exports, v1logs
 
 STARTER_PROFILE = """\
 # Client profile for one health check. Paths are relative to this file.
@@ -137,6 +137,7 @@ def _new_healthcheck(prof: dict) -> tuple[HealthCheck, dt.date]:
 PACK_TEMPLATES = {
     "SEP": DEFAULT_TEMPLATE,
     "SWP": DEFAULT_TEMPLATE.parent / "swp_report_template.docx",
+    "CECP": DEFAULT_TEMPLATE.parent / "cecp_report_template.docx",
 }
 
 
@@ -177,6 +178,37 @@ def _load_swp_exports(hc: HealthCheck, logs_dir: Path, prof: dict, say=print) ->
     hc.metrics["logs_dir_files"] = sorted(p.name for p in logs_dir.rglob("*") if p.is_file())
 
 
+def _load_cecp_exports(hc: HealthCheck, logs_dir: Path, say=print) -> None:
+    """Detection log export (result.csv) and the monthly report PDF (CECP)."""
+    pdf = cecp_exports.find_report_pdf(logs_dir)
+    pdf_info: dict = {}
+    if pdf:
+        try:
+            pdf_info = cecp_exports.parse_report_pdf(pdf)
+            say(f"monthly report: {pdf.name} ({pdf_info.get('total_scans', '?')} items scanned)")
+        except Exception as exc:                       # an unreadable PDF must not stop the report
+            hc.warnings.append(f"{pdf.name}: not read ({exc})")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                png = cecp_exports.render_total_panel(pdf, Path(tmp) / "panel.png")
+                if png:
+                    hc.metrics["_total_panel_png"] = png.read_bytes()
+        except Exception as exc:
+            hc.warnings.append(f"Total Items Scanned panel not cut from the PDF: {exc}")
+    else:
+        hc.warnings.append("No monthly report PDF in the logs - total items scanned is taken from the "
+                           "detection log only")
+    log = cecp_exports.find_detection_log(logs_dir)
+    rows = cecp_exports.read_detections(log) if log else []
+    if log:
+        say(f"detection log: {log.name} ({len(rows)} rows)")
+    else:
+        hc.warnings.append("No detection log export (result.csv) in the logs - detection charts need it")
+    if rows or pdf_info:
+        hc.metrics.update(cecp_exports.detection_metrics(rows, pdf_info))
+    hc.metrics["logs_dir_files"] = sorted(p.name for p in logs_dir.rglob("*") if p.is_file())
+
+
 def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print,
                   prof_latest: str = "", prof: dict | None = None, short: str = "SEP",
                   keep_dir: Path | None = None) -> None:
@@ -190,6 +222,9 @@ def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print,
             shutil.copytree(logs_dir, keep_dir, dirs_exist_ok=True)
         if short == "SWP":
             _load_swp_exports(hc, logs_dir, prof or {}, say)
+            return
+        if short == "CECP":
+            _load_cecp_exports(hc, logs_dir, say)
             return
         pols = sorted(logs_dir.rglob("*.cmpolicy"))
         for i, pf in enumerate(pols):
@@ -320,6 +355,9 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
         from .engine import derive_swp
         derive_swp.derive(hc)
         _check_console_versions(hc)
+    elif short == "CECP":
+        from .engine import derive_cecp
+        derive_cecp.derive(hc)
     evaluate(hc, rules)
     first = hc.client_name.split()[0] if hc.client_name else "Client"
     stem = f"{first}_{short}_Health_Check_Report_{report.strftime('%b_%Y')}"

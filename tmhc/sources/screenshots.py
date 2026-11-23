@@ -227,7 +227,11 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
         if section == "policy" and pol.get("scopes"):
             for sc in pol["scopes"]:          # one block of rows per reviewed policy
                 for g in pol.get("groups", []):
+                    if g.get("only") and sc["id"] not in g["only"]:
+                        continue
                     for r in g.get("rows", []):
+                        if r.get("only") and sc["id"] not in r["only"]:
+                            continue
                         add(r, sc["id"], f"{sc.get('default_name', sc['id'])} - {g.get('heading', '').replace('{name}', '').strip(' –-')}")
             continue
         for g in rules.get(section, {}).get("groups", []) + rules.get(section, {}).get("tail_groups", []):

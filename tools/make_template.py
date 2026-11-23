@@ -91,6 +91,12 @@ def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | No
             set_cell_text(c0, "{{EXEC_PRODUCT}}")
             set_cell_text(c1, "{{EXEC_FINDING}}")
         elif (h.startswith("Component | Trend Recommended") or h.startswith("Component | Component")) and row_map:
+            if row_map.get("tables"):                 # one map per settings table, in order (CECP)
+                maps = row_map["tables"]
+                if servers_seen < len(maps):
+                    _tag_rows(t, maps[servers_seen] or {}, f"table {servers_seen + 1}")
+                servers_seen += 1
+                continue
             which = "server" if servers_seen == 0 else "policy"
             servers_seen += 1
             _tag_rows(t, row_map.get(which) or {}, which)
@@ -108,12 +114,17 @@ def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | No
             token = "{{SERVER_GAPS}}" if gaps_seen == 0 else "{{POLICY_GAPS}}"
             gaps_seen += 1
             trs = t._tbl.findall(qn("w:tr"))
-            if len(trs) > 2 and len(trs[1].findall(qn("w:tc"))) == 1:
-                # sub-heading rows ("In Both ... Policy") followed by gap rows
-                for tr in trs[3:]:
+            head_rows = [tr for tr in trs[1:] if len(tr.findall(qn("w:tc"))) == 1]
+            gap_rows = [tr for tr in trs[1:] if len(tr.findall(qn("w:tc"))) >= 2]
+            if head_rows and gap_rows:
+                # sub-heading rows ("In Both ... Policy", "In Exchange Online - ...") and gap rows
+                hp, gp = head_rows[0], gap_rows[0]
+                for tr in trs[1:]:
                     t._tbl.remove(tr)
-                set_cell_text(trs[1].findall(qn("w:tc"))[0], "{{GAP_HEADING}}")
-                set_cell_text(trs[2].findall(qn("w:tc"))[-1], token)
+                trs[0].addnext(hp)
+                hp.addnext(gp)
+                set_cell_text(hp.findall(qn("w:tc"))[0], "{{GAP_HEADING}}")
+                set_cell_text(gp.findall(qn("w:tc"))[-1], token)
             else:
                 trim_rows(t, 2)
                 set_cell_text(tcs(t.rows[1])[-1], token)

@@ -11,9 +11,11 @@ Products:
 |---|---|---|---|
 | Standard Endpoint Protection (Apex One) — tab **SEP** | yes | yes (19-slide efficacy deck) | real engagement: same 11 server + 8 policy gaps, identical counts |
 | Server & Workload Protection (Vision One SWP) — tab **SWP** | yes | yes (12-slide efficacy deck) | real engagement: every row, status icon and gap identical to the analyst's report |
+| Cloud Email and Collaboration Protection (formerly Cloud App Security / CAS) — tab **CECP** | yes | yes (12-slide efficacy deck) | real engagement (72 screenshots): all 98 settings rows, status icons, 15 gaps and the executive summary identical to the analyst's report |
 
-SEP and SWP are kept as separate tabs on the website and separate reports;
-they can be merged later.
+SEP, SWP and CECP are kept as separate tabs on the website and separate
+reports; they can be merged later. The product is called **CECP** everywhere
+(file names, tabs, report); "CAS" in a product name is recognised as CECP.
 
 **Runs entirely on your own machine.** The report, the evidence and the
 screenshots stay on that machine. Nothing is uploaded unless you deliberately
@@ -194,6 +196,27 @@ Inspection, Firewall, Intrusion Prevention, Settings (all tabs); plus the
 Default Real-Time / Scheduled / Manual scan configurations. The SWP console's
 dark grey dropdown text is read with a contrast-stretched OCR pass.
 
+For **Cloud Email and Collaboration Protection (CECP)** the logs zip should hold:
+
+| Export | Where | Feeds |
+|---|---|---|
+| Detection log export (`result.csv`) | CECP › Detection logs › Export (one month) | the "<threat> Detections" sections and slides: URLs, senders, recipients / affected users, actions |
+| Monthly report PDF (`<Company>'s <Month> Report-YYYYMMDD.pdf`) | CECP › Reports › One-Time / Scheduled report | the *Total Items Scanned* panel (cut straight from the PDF), total scans and the threat counts |
+
+CECP screenshots (labels like `Asp exchange`, `Ms sharepoint`, `Va teams`
+help; the service is also recognised from the breadcrumb "ATP Policy for
+<service>"): License, Email account inventory, Service status, and for
+Exchange Online the ATP policy pages General, Advanced Spam Protection (rules,
+approved/blocked lists, actions), Malware Scanning (rules, actions), File
+Blocking, Web Reputation (rules, approved/blocked list, actions), Virtual
+Analyzer (rules, actions), Correlated Intelligence; for SharePoint Online,
+OneDrive and Microsoft Teams the same pages of their ATP policy; the DLP policy
+lists; and the global settings Approved/Blocked Lists, High Profile Domains and
+Users, Internal Domain List, Suspicious Object Settings and Attachment Password
+Guessing. Switches are read by colour (blue = on). Options of a module that is
+switched off are reported as N/A, and the actions of a *Monitor Only* policy as
+"Pass (Monitor Only Policy)", as in the analysts' reports.
+
 **Latest agent builds** (SEP; SWP Windows and Linux) are filled in
 automatically from Trend Micro's own release notes — the Apex One as a Service
 / SEP hotfix readme ("Security Agent version: 14.0.NNNNN") and the Deep
@@ -249,11 +272,24 @@ just asked about every missing field.
   placeholder, drops revision history, and refuses to save if a `--forbid`
   word survives.
 
+* **CECP templates** — the Word template has five settings tables and a
+  detections section, so it has its own wrapper around `make_template.py`:
+  ```bash
+  python tools/make_cecp_template.py Finished_CECP_Report.docx tmhc/render/templates/cecp_report_template.docx \
+      --client "Client Name Limited" --owner "Account Owner" --by "Analyst" --quarter "Q4 2026" \
+      --report-date 18/11/2026 --check-date "27 Oct 2026" --period-from "01 Sept 2026" --period-to "30 Sept 2026" \
+      --forbid clientdomain --forbid someuser
+  python tools/make_pptx_template.py Finished_CECP_Deck.pptx tmhc/render/templates/cecp_efficacy_template.pptx \
+      --product cecp --forbid clientname
+  ```
+  Rows are mapped in `tools/cecp_row_map.yaml`; the detection blocks are
+  rebuilt per threat type found in the logs.
+
 ## Other products
 
 The pipeline is product-neutral; a product needs a rule pack, a template
-and (ideally) an export parser. SEP and SWP are done. Cloud Email Gateway
-and Cloud Email & Collaboration Protection follow the same pattern:
+and (ideally) an export parser. SEP, SWP and CECP are done. Cloud Email
+Gateway follows the same pattern:
 add `tmhc/rules/<product>.yaml`, a template made from one of your finished
 reports with `tools/make_template.py`, and an export parser in
 `tmhc/sources/` where the console offers one (for example a Server &

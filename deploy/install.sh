@@ -90,7 +90,7 @@ fi
 
 # ---------------------------------------------------------------- packages
 say "Installing Ubuntu packages (Python, Tesseract OCR$( [ "$SAMBA" = 1 ] && echo ', Samba'))"
-PKGS="python3 python3-venv python3-pip tesseract-ocr tesseract-ocr-eng git curl"
+PKGS="python3 python3-venv python3-pip tesseract-ocr tesseract-ocr-eng poppler-utils fonts-thai-tlwg git curl"
 [ "$SAMBA" = 1 ] && PKGS="$PKGS samba"
 $SUDO apt-get update -qq
 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PKGS >/dev/null
