@@ -357,6 +357,9 @@ def main(argv=None) -> None:
     if argv[:1] == ["web"]:
         from .web.app import main as web_main
         return web_main(argv[1:])
+    if argv[:1] == ["builds"]:
+        from .latest_builds import main as builds_main
+        return builds_main(argv[1:])
     ap = argparse.ArgumentParser(prog="tmhc", description="Trend Micro health-check report generator")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_init = sub.add_parser("init", help="write a starter client profile")
@@ -373,6 +376,7 @@ def main(argv=None) -> None:
     p_run.add_argument("--template", type=Path, help="alternative Word template")
     sub.add_parser("watch", help="watch an inbox folder and build reports automatically (see tmhc/watch.py)")
     sub.add_parser("web", help="upload website (see tmhc/web/app.py)")
+    sub.add_parser("builds", help="update the latest agent builds from Trend Micro (tmhc/latest_builds.py)")
     a = ap.parse_args(argv)
 
     try:

@@ -586,10 +586,11 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
 
     # ---------------- settings ----------------------------------------------
     @app.get("/settings", response_class=HTMLResponse)
-    def settings_page(request: Request, saved: int = 0):
+    def settings_page(request: Request, saved: int = 0, checked: int = 0):
         c = cfg()
         return render(request, "settings.html", d=c.get("defaults") or {}, o=c.get("options") or {},
-                      products=PRODUCTS, saved=saved, build_fields=BUILD_FIELDS, info=PRODUCT_INFO, users=sorted((c.get("web") or {}).get("users", {})))
+                      products=PRODUCTS, saved=saved, checked=checked, build_fields=BUILD_FIELDS, info=PRODUCT_INFO,
+                      lb=(c.get("defaults") or {}).get("latest_builds") or {}, users=sorted((c.get("web") or {}).get("users", {})))
 
     @app.post("/settings")
     async def settings_save(request: Request):
@@ -600,14 +601,20 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                   "customer_attendance", "trend_attendance"):
             if k in form:
                 d[k] = form[k].strip()
+        recheck = False
         for fields in BUILD_FIELDS.values():
             for key, label, ex in fields:
                 build = form.get(key, "").strip()
                 if build and not BUILD_RE.fullmatch(build):
                     raise HTTPException(400, f"{label} must look like {ex}")
-                if key in form and build != d.get(key, ""):
+                if form.get(f"auto_{key}") == "1":         # follow Trend Micro again
+                    if d.get(f"{key}_manual"):
+                        d[f"{key}_manual"] = False
+                        recheck = True
+                elif key in form and build != d.get(key, ""):
                     d[key] = build
                     d[key + "_updated"] = dt.date.today().isoformat() if build else ""
+                    d[f"{key}_manual"] = True                # typed by the analyst: keep it
         if form.get("zip_password"):                   # blank = keep the current one
             d["zip_password"] = form["zip_password"]
         if form.get("clear_zip_password") == "1":
@@ -617,7 +624,18 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                 raise HTTPException(400, "password must be at least 8 characters")
             c["web"]["users"][user_of(request)] = _hash(form["new_password"])
         _save_config(config_path, c)
+        if recheck:
+            _refresh_builds()
         return RedirectResponse("/settings?saved=1", status_code=303)
+
+    def _refresh_builds() -> None:
+        from .. import latest_builds
+        latest_builds.request_check(config_path)     # done by the tmhc-builds job (internet access)
+
+    @app.post("/settings/check-builds")
+    def check_builds():
+        _refresh_builds()
+        return RedirectResponse("/settings?checked=1", status_code=303)
 
     return app
 

@@ -194,8 +194,18 @@ Inspection, Firewall, Intrusion Prevention, Settings (all tabs); plus the
 Default Real-Time / Scheduled / Manual scan configurations. The SWP console's
 dark grey dropdown text is read with a contrast-stretched OCR pass.
 
-The latest agent builds (Apex One; SWP Windows and Linux) are set once in
-**Settings** and asked for on every new health check.
+**Latest agent builds** (SEP; SWP Windows and Linux) are filled in
+automatically from Trend Micro's own release notes — the Apex One as a Service
+/ SEP hotfix readme ("Security Agent version: 14.0.NNNNN") and the Deep
+Security Agent release notes ("Build number: 20.0.3-NNNNN"). A small
+scheduled job, `tmhc-builds` (systemd timer), checks once a day, and within
+5 minutes when you press **Check Trend Micro now** in Settings. It is the
+only part of the server allowed onto the internet and it reads nothing but
+those public pages; the website and the report builder stay offline.
+Typing a build in Settings overrides it (shown as *set manually*); tick
+*Use Trend's latest automatically* to go back. Each new health check starts
+with these values and can still be changed per client. By hand:
+`tmhc builds --config ~/healthcheck/config.yaml --force`.
 
 Screenshots to make sure you take for SEP (no export exists for these):
 **License Information**, Apex One **Global Agent Settings** (all tabs),

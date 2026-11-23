@@ -202,3 +202,58 @@ def test_swp_requires_both_builds(site, tmp_path):
                                   "latest_dsa_windows": "20.0.3.29020"},
                     files={"logs_zip": ("logs.zip", _logs_zip(tmp_path / "x.zip").read_bytes())})
     assert "latest Linux agent build" in r.text and not (inbox / "NoBuild").exists()
+
+
+# ---------------------------------------------------------------- latest builds from Trend Micro
+def _fake_fetch(pages):
+    def fetch(url):
+        return pages.get(url)
+    return fetch
+
+
+def test_latest_builds_lookup_and_manual_override(tmp_path):
+    import datetime as dt
+    from tmhc import latest_builds as lb
+    pages = {
+        lb.SEP_README.format(ym="202610"): "<p><b>Security Agent version:</b> 14.0.0.21067</p>"
+                                           "<p>Security Agent Version: 3.5.9000</p>",
+        lb.SEP_README.format(ym="202609"): "Security Agent version: 14.0.20958",
+        lb.DSA_NOTES: "<h3>Deep Security Agent - 20.0.3-31610</h3><p>Build number: 20.0.3-31610</p>"
+                      "<p>Build number: 20.0.3-28120</p>",
+    }
+    found = lb.check(_fake_fetch(pages), today=dt.date(2026, 11, 23))
+    assert found["latest_agent_build"][0] == "14.0.21067"
+    assert found["latest_dsa_windows"][0] == "20.0.3.31610" == found["latest_dsa_linux"][0]
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"inbox": str(tmp_path), "defaults": {
+        "latest_agent_build": "14.0.20958", "latest_dsa_linux": "20.0.3.99999", "latest_dsa_linux_manual": True}}))
+    real_check = lb.check
+    lb.check = lambda fetch=None, today=None: real_check(_fake_fetch(pages), dt.date(2026, 11, 23))
+    try:
+        changed = lb.run_scheduled(cfg, log=lambda *_: None)
+        d = yaml.safe_load(cfg.read_text())["defaults"]
+        assert d["latest_agent_build"] == "14.0.21067" and d["latest_dsa_windows"] == "20.0.3.31610"
+        assert d["latest_dsa_linux"] == "20.0.3.99999"              # manual value kept
+        assert "latest_agent_build" in changed and d["latest_builds"]["checked"]
+        assert lb.run_scheduled(cfg, log=lambda *_: None) == {}     # checked today: not again
+        lb.request_check(cfg)                                         # button on the website
+        assert (tmp_path / lb.REQUEST_FILE).exists()
+        lb.run_scheduled(cfg, log=lambda *_: None)
+        assert not (tmp_path / lb.REQUEST_FILE).exists()
+    finally:
+        lb.check = real_check
+
+
+def test_settings_manual_and_auto_builds(site):
+    client, cfg_path, _ = site
+    client.post("/settings", data={"latest_agent_build": "14.0.20000"})
+    d = yaml.safe_load(cfg_path.read_text())["defaults"]
+    assert d["latest_agent_build"] == "14.0.20000" and d["latest_agent_build_manual"] is True
+    assert "set manually" in client.get("/settings").text
+    client.post("/settings", data={"latest_agent_build": "14.0.20000", "auto_latest_agent_build": "1"})
+    d = yaml.safe_load(cfg_path.read_text())["defaults"]
+    assert not d["latest_agent_build_manual"]
+    assert (cfg_path.parent / ".check_builds").exists()               # the timer job checks Trend now
+    r = client.post("/settings/check-builds", follow_redirects=False)
+    assert r.status_code == 303 and "checked=1" in r.headers["location"]

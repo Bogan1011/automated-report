@@ -58,7 +58,12 @@ defaults:
   customer_attendance: Console Access
   trend_attendance: Your Name
   zip_password: ""        # the password your log zips usually use
-  latest_agent_build: ""  # Trend's current Apex One agent build, e.g. 14.0.20958
+  # Latest agent builds. Filled automatically from Trend Micro's release notes
+  # once a day (see tmhc/latest_builds.py); a value set on the website's
+  # Settings page is kept as a manual override.
+  latest_agent_build: "14.0.21067"     # Standard Endpoint Protection (Oct 2026 release)
+  latest_dsa_windows: "20.0.3.31610"   # Server & Workload Protection, Windows
+  latest_dsa_linux: "20.0.3.31610"     # Server & Workload Protection, Linux
 
 options:
   rules: apexone_sep

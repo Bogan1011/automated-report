@@ -10,9 +10,15 @@
 <div><label>Customer attendance</label><input type="text" name="customer_attendance" value="{{ d.customer_attendance or '' }}"></div>
 <div><label>Location</label><input type="text" name="location" value="{{ d.location or '' }}"></div>
 </div></div>
-<div class="card"><h2>Latest agent builds</h2><p class="muted">Trend releases new agent builds about once a month. Set them here once; every new health check starts with them (you can still change them per client).</p>
+<div class="card"><h2>Latest agent builds</h2>
+<p class="muted">Filled automatically from Trend Micro's release notes (checked once a day{% if lb.checked %}, last checked {{ lb.checked.replace('T', ' ') }}{% endif %}).
+Type a different build to override it; tick <i>Use Trend's latest</i> to go back to automatic. Every new health check starts with these values and you can still change them per client.</p>
+{% if lb.error %}<p class="msg err">{{ lb.error }}</p>{% endif %}{% if checked %}<p class="msg ok">Check requested - the new values appear here within about 5 minutes (refresh the page).</p>{% endif %}
 {% for sh, fields in build_fields.items() %}<h3 style="margin:14px 0 6px">{{ info[sh].name }}</h3><div class="grid">{% for key, label, ex in fields %}
-<div><label>{{ label }}{% if d[key ~ '_updated'] %} <span class="hint">changed {{ d[key ~ '_updated'] }}</span>{% endif %}</label><input type="text" name="{{ key }}" value="{{ d[key] or '' }}" placeholder="e.g. {{ ex }}" pattern="\d+\.\d+\.\d+(\.\d+)?"></div>{% endfor %}</div>{% endfor %}</div>
+<div><label>{{ label }} <span class="hint">{% if d[key ~ '_manual'] %}set manually{% else %}from Trend Micro{% endif %}{% if d[key ~ '_updated'] %}, changed {{ d[key ~ '_updated'] }}{% endif %}</span></label>
+<input type="text" name="{{ key }}" value="{{ d[key] or '' }}" placeholder="e.g. {{ ex }}" pattern="\d+\.\d+\.\d+(\.\d+)?">
+{% if d[key ~ '_manual'] %}<label style="font-weight:normal;margin-top:4px"><input type="checkbox" name="auto_{{ key }}" value="1" style="width:auto"> Use Trend's latest automatically</label>{% endif %}</div>{% endfor %}</div>{% endfor %}
+<p style="margin:12px 0 0"><button class="btn ghost small" formaction="/settings/check-builds" formmethod="post" formnovalidate>Check Trend Micro now</button></p></div>
 <div class="card"><h2>Logs zip password</h2><p class="muted">Used to open every client's logs zip. {{ 'A password is saved.' if d.zip_password else 'No password saved.' }}</p>
 <div class="grid"><div><label>New zip password <span class="hint">blank = keep current</span></label><input type="password" name="zip_password" autocomplete="off"></div>
 <div><label>&nbsp;</label><label style="font-weight:400"><input type="checkbox" name="clear_zip_password" value="1"> Remove the saved password</label></div></div></div>

@@ -246,6 +246,41 @@ $HARDEN
 WantedBy=multi-user.target
 EOF
   start_service tmhc-watch
+
+  say "Scheduled job tmhc-builds (latest agent builds from Trend Micro)"
+  # The only part allowed onto the internet: it reads Trend Micro's public
+  # release notes and writes three version numbers into the settings.
+  $SUDO tee /etc/systemd/system/tmhc-builds.service >/dev/null <<EOF
+[Unit]
+Description=Health-check: latest Trend Micro agent builds
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$RUN_USER
+WorkingDirectory=$WORKDIR
+ExecStart=$PY -m tmhc builds --config $CONFIG
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+$HARDEN
+EOF
+  $SUDO tee /etc/systemd/system/tmhc-builds.timer >/dev/null <<EOF
+[Unit]
+Description=Check Trend Micro agent builds (daily; within 5 minutes when asked from Settings)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  if pidof systemd >/dev/null; then
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now tmhc-builds.timer >/dev/null 2>&1 && echo "tmhc-builds.timer is active"
+    $SUDO systemctl start tmhc-builds.service >/dev/null 2>&1 || warn "first Trend Micro check failed (no internet?) - the saved builds are kept"
+  fi
 fi
 
 # ---------------------------------------------------------------- website
