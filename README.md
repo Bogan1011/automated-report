@@ -64,9 +64,18 @@ cd automated-report
 ./deploy/install.sh
 ```
 
-The installer asks for the names printed in every report, the usual
-logs-zip password and a website login, then starts two background
-services: `tmhc-web` (the website) and `tmhc-watch` (builds the reports).
+Run it as **root** or as a normal user with sudo:
+
+| | services run as | program | data (client folders, settings) |
+|---|---|---|---|
+| root | system user `tmhc` (no login shell) | `/opt/tmhc` | `/var/lib/tmhc/healthcheck` |
+| normal user | that user | the cloned folder | `~/healthcheck` |
+
+The installer asks for the names printed in every report, the logs-zip
+password (one password for every client) and a website login, then starts
+two background services: `tmhc-web` (the website) and `tmhc-watch` (builds
+the reports). It also installs a `tmhc` command, e.g.
+`tmhc web --set-password alice` to add a login.
 The website uses port **8090**; if that port is taken it uses the next free
 one and prints the address (e.g. `http://192.168.1.70:8090`). Use
 `--port=NNNN` to choose. Add `--samba` for a Windows share as well.
@@ -87,7 +96,7 @@ one and prints the address (e.g. `http://192.168.1.70:8090`). Use
 
 **Settings** (website): default names for new health checks, the logs zip
 password used for every client, and your login password. More logins:
-`.venv/bin/python -m tmhc web --set-password <name>` on the server.
+`tmhc web --set-password <name>` on the server.
 
 The website only answers the office network (10.x, 172.16-31.x, 192.168.x)
 and its service cannot reach the internet. It uses a login with
@@ -95,8 +104,8 @@ PBKDF2-hashed passwords; traffic is plain HTTP inside the LAN.
 
 | | |
 |---|---|
-| Settings file | `~/healthcheck/config.yaml` (the website edits it) |
-| Client folders | `~/healthcheck/inbox/<Client>/` (`output/` holds the report) |
+| Settings file | `config.yaml` in the data folder (the website edits it) |
+| Client folders | `inbox/<Client>/` in the data folder (`output/` holds the report) |
 | Live log | `journalctl -u tmhc-web -u tmhc-watch -f` |
 | Update | `cd ~/automated-report && git pull && ./deploy/install.sh` |
 | Without the website | copy files into `~/healthcheck/inbox/<Client>/` (Samba or WinSCP) - same result |
