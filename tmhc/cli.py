@@ -38,6 +38,7 @@ check_date: 2026-10-07        # day of the Teams session (YYYY-MM-DD)
 report_date: 2026-10-28       # printed on the cover (YYYY-MM-DD)
 prepared_by: Your Name
 approved_by: Approver Name
+latest_agent_build: ""        # Trend's current Apex One agent build, e.g. 14.0.20958
 account_owner: Account Owner
 location: Remotely
 customer_attendance: Console Access
@@ -133,7 +134,8 @@ def _new_healthcheck(prof: dict) -> tuple[HealthCheck, dt.date]:
     return hc, report
 
 
-def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print) -> None:
+def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print,
+                  prof_latest: str = "") -> None:
     """Policy export, agent list and log exports - all local file parsing."""
     if not ev.get("logs"):
         say("no logs/exports configured - every setting will need a screenshot or checklist entry")
@@ -151,7 +153,15 @@ def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print) 
                 hc.warnings.append(f"Additional policy export {pf.name} ignored - one policy per report")
         agents = next(iter(sorted(logs_dir.rglob("*Agent List*.csv"))), None)
         if agents:
-            facts, metrics = agentlist.extract(agents, int(opts.get("stale_pattern_releases", 12)))
+            latest = str(prof_latest or "").strip()
+            facts, metrics = agentlist.extract(agents, int(opts.get("stale_pattern_releases", 12)),
+                                               latest_build=latest, build_rows=int(opts.get("build_rows", 5)))
+            if not latest:
+                hc.warnings.append("Latest agent build is not set - using the newest build seen in the agent "
+                                   f"list ({metrics['newest_seen_build']}). Set it on the website (Settings).")
+            elif agentlist._version_key(metrics["newest_seen_build"]) > agentlist._version_key(latest):
+                hc.warnings.append(f"Agents already run {metrics['newest_seen_build']}, newer than the latest "
+                                   f"build set ({latest}) - update it in Settings.")
             hc.add_facts(facts)
             hc.metrics.update(metrics)
             say(f"agent list: {metrics['deployed_agents']} agents "
@@ -170,7 +180,8 @@ def make_checklist(profile_path: Path, force: bool = False, sync: bool = False, 
     prof, base, opts, ev = _load_profile(profile_path)
     rules = load_rules(opts.get("rules", "apexone_sep"))
     hc, _ = _new_healthcheck(prof)
-    _load_exports(hc, base, ev, opts, say=(lambda *_: None) if quiet else print)
+    _load_exports(hc, base, ev, opts, say=(lambda *_: None) if quiet else print,
+                  prof_latest=str(prof.get("latest_agent_build") or ""))
     out = base / ev.get("checklist", "checklist.xlsx")
     covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
     # Pre-fill anything a screenshot reading already found, for confirmation.
@@ -195,7 +206,7 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
     hc, report = _new_healthcheck(prof)
     say = print
 
-    _load_exports(hc, base, ev, opts, say)
+    _load_exports(hc, base, ev, opts, say, prof_latest=str(prof.get("latest_agent_build") or ""))
 
     # ---- screenshots -------------------------------------------------------
     out_dir = out_dir or (base / "output")

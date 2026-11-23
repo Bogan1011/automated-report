@@ -10,6 +10,8 @@
 <div><label>Customer attendance</label><input type="text" name="customer_attendance" value="{{ d.customer_attendance or '' }}"></div>
 <div><label>Location</label><input type="text" name="location" value="{{ d.location or '' }}"></div>
 </div></div>
+<div class="card"><h2>Latest Apex One agent build</h2><p class="muted">Trend releases a new agent build about once a month. Set it here once; every new health check starts with it (you can still change it per client).{% if d.latest_agent_build_updated %} Last changed {{ d.latest_agent_build_updated }}.{% endif %}</p>
+<div class="grid"><div><label>Latest agent build</label><input type="text" name="latest_agent_build" value="{{ d.latest_agent_build or '' }}" placeholder="e.g. 14.0.20958" pattern="\d+\.\d+\.\d+(\.\d+)?"></div></div></div>
 <div class="card"><h2>Logs zip password</h2><p class="muted">Used to open every client's logs zip. {{ 'A password is saved.' if d.zip_password else 'No password saved.' }}</p>
 <div class="grid"><div><label>New zip password <span class="hint">blank = keep current</span></label><input type="password" name="zip_password" autocomplete="off"></div>
 <div><label>&nbsp;</label><label style="font-weight:400"><input type="checkbox" name="clear_zip_password" value="1"> Remove the saved password</label></div></div></div>

@@ -35,6 +35,7 @@ class Source(str, Enum):
     EXCLUSION_CSV = "exclusion_csv"   # scan-exclusion CSV exports
     SCREENSHOT = "screenshot"         # vision model reading a console capture
     MANUAL = "manual"                 # analyst override in client profile
+    POLICY_INFERRED = "policy_inferred"  # deduced from what the export leaves out
 
     @property
     def precedence(self) -> int:
@@ -50,6 +51,7 @@ _PRECEDENCE = {
     Source.EXCLUSION_CSV: 70,
     Source.V1_LOGS: 60,
     Source.SCREENSHOT: 10,
+    Source.POLICY_INFERRED: 5,     # a screenshot reading (direct evidence) beats an inference
 }
 
 

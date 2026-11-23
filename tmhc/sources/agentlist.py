@@ -36,9 +36,13 @@ def _is_server(platform: str) -> bool:
 class AgentInventory:
     """Parsed Apex One agent list."""
 
-    def __init__(self, path: str | Path, stale_releases: int = DEFAULT_STALE_RELEASES):
+    def __init__(self, path: str | Path, stale_releases: int = DEFAULT_STALE_RELEASES,
+                 latest_build: str = ""):
         self.path = Path(path)
         self.stale_releases = stale_releases
+        # Trend's current release, set by the analyst (Settings on the website).
+        # Without it the newest build seen in this environment is used.
+        self.configured_latest = (latest_build or "").strip()
         with self.path.open(encoding="utf-8-sig", newline="") as fh:
             self.rows: list[dict] = [r for r in csv.DictReader(fh) if any(r.values())]
 
@@ -56,13 +60,19 @@ class AgentInventory:
         return Counter(r.get("Agent Program", "").strip() for r in self.rows)
 
     @property
-    def latest_build(self) -> str:
+    def newest_seen(self) -> str:
         valid = [b for b in self.builds if b]
         return max(valid, key=_version_key) if valid else ""
 
     @property
+    def latest_build(self) -> str:
+        return self.configured_latest or self.newest_seen
+
+    @property
     def outdated_agents(self) -> int:
-        return self.total - self.builds.get(self.latest_build, 0)
+        """Agents on a build older than the latest one."""
+        latest = _version_key(self.latest_build)
+        return sum(c for b, c in self.builds.items() if b and _version_key(b) < latest)
 
     @property
     def restart_required(self) -> int:
@@ -106,26 +116,31 @@ class AgentInventory:
         return n
 
     def builds_behind(self, n: int = 3) -> int:
-        """Agents more than `n` distinct builds behind the newest one (the report's N-3 check)."""
-        ordered = sorted((b for b in self.builds if b), key=_version_key, reverse=True)
+        """Agents more than `n` builds behind the latest one (the report's N-3 check)."""
+        latest = _version_key(self.latest_build)
+        ordered = sorted({b for b in self.builds if b and _version_key(b) <= latest} | {self.latest_build},
+                         key=_version_key, reverse=True)
         if len(ordered) <= n:
             return 0
         cutoff = _version_key(ordered[n])
         return sum(c for b, c in self.builds.items() if b and _version_key(b) < cutoff)
 
-    def build_breakdown(self) -> str:
-        """The multi-line build spread used in the overview table."""
-        return "\n".join(
-            f"{b} - {c}" for b, c in
-            sorted(self.builds.items(), key=lambda kv: _version_key(kv[0]), reverse=True)
-            if b
-        )
+    def build_breakdown(self, show: int = 5) -> str:
+        """Build spread for the overview table: the newest `show` builds, then one line for the rest."""
+        items = [(b, c) for b, c in sorted(self.builds.items(), key=lambda kv: _version_key(kv[0]), reverse=True) if b]
+        lines = [f"{b} - {c}" for b, c in items[:show]]
+        rest = items[show:]
+        if rest:
+            prefixes = {".".join(b.split(".")[:2]) for b, _ in rest}
+            label = f"{prefixes.pop()}.x" if len(prefixes) == 1 else "Other builds"
+            lines.append(f"{label} - {sum(c for _, c in rest)}")
+        return "\n".join(lines)
 
 
-def extract(path: str | Path,
-            stale_releases: int = DEFAULT_STALE_RELEASES) -> tuple[list[Fact], dict[str, Any]]:
+def extract(path: str | Path, stale_releases: int = DEFAULT_STALE_RELEASES,
+            latest_build: str = "", build_rows: int = 5) -> tuple[list[Fact], dict[str, Any]]:
     """Return facts plus a metrics dict for the summary text."""
-    inv = AgentInventory(path, stale_releases)
+    inv = AgentInventory(path, stale_releases, latest_build)
     ev = inv.path.name
     out: list[Fact] = []
 
@@ -138,7 +153,7 @@ def extract(path: str | Path,
 
     add("inventory.deployed_agents", inv.total, f"Deployed - {inv.total}")
     add("inventory.online_offline", (online, offline), f"Online - {online}\nOffline - {offline}")
-    add("inventory.agent_build", inv.builds, inv.build_breakdown())
+    add("inventory.agent_build", inv.builds, inv.build_breakdown(build_rows))
     add("inventory.latest_build", inv.latest_build, inv.latest_build)
     add("inventory.outdated_agents", inv.outdated_agents, str(inv.outdated_agents))
     add("inventory.builds_behind_n3", inv.builds_behind(3), str(inv.builds_behind(3)))
@@ -163,6 +178,8 @@ def extract(path: str | Path,
         "server_agents": inv.server_agents,
         "stale_pattern_agents": inv.stale_pattern_agents(),
         "latest_pattern": inv.latest_pattern,
-        "build_breakdown": inv.build_breakdown(),
+        "build_breakdown": inv.build_breakdown(build_rows),
+        "latest_build_source": "settings" if inv.configured_latest else "newest seen in agent list",
+        "newest_seen_build": inv.newest_seen,
     }
     return out, metrics

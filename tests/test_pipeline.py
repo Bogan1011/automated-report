@@ -200,3 +200,62 @@ def test_checklist_sync_keeps_answers_and_adds_new_rows(tmp_path):
     assert vals[some[0]]["deployed"] == "Disabled"                    # answer kept
     assert len(vals) == len(checklist.wanted_keys(cat, set()))
     assert checklist.sync(p, cat, covered=set()) is False           # nothing changed -> no rewrite
+
+
+
+# --------------------------------------------------------------------------- fixes from the second client
+def test_schedule_codes_and_unknown_left_blank(tmp_path):
+    import json as _j
+    def pol(freq):
+        data = [{"wcomponent_name": "comOSCESSS", "settings": _j.dumps({"Frequency": freq, "DayOfWeek": 5})}]
+        p = tmp_path / f"p{freq}.cmpolicy"
+        p.write_text(_j.dumps({"policy": [{"policyName": "x", "settings": _j.dumps({"data": data})}]}))
+        return {f.key: f for f in policy.extract(p)[0]}
+    assert pol(3)["policy.scheduled.schedule"].display == "Daily"
+    assert pol(2)["policy.scheduled.schedule"].display == "Weekly (Friday)"
+    assert "policy.scheduled.schedule" not in pol(9)            # unknown code: not guessed
+
+
+def test_dim_inferred_when_export_omits_levels(tmp_path):
+    import json as _j
+    data = [{"wcomponent_name": "comOSCESM", "settings": _j.dumps({"CloudScanType": 1})},
+            {"wcomponent_name": "comOSCE_IVPAgent", "settings": _j.dumps({"vulnerabilityShieldState": 0})}]
+    p = tmp_path / "dim.cmpolicy"
+    p.write_text(_j.dumps({"policy": [{"policyName": "x", "settings": _j.dumps({"data": data})}]}))
+    f = {x.key: x for x in policy.extract(p)[0]}
+    assert f["policy.dynamic_intelligence_mode"].display == "Enabled"
+    assert f["policy.dynamic_intelligence_mode"].source == Source.POLICY_INFERRED
+    assert f["policy.monitoring_level"].display == "Dynamic Intelligence Mode Enabled"
+    assert f["policy.vp.enabled"].value is True
+    assert "policy.vp.profile" not in f                         # not in the export when VP is on
+    hc = HealthCheck()
+    hc.add_facts(list(f.values()))
+    hc.add_fact(Fact("policy.dynamic_intelligence_mode", False, "Disabled", Source.SCREENSHOT))
+    assert hc.get("policy.dynamic_intelligence_mode").display == "Disabled"   # screenshot beats inference
+
+
+def test_dim_level_passes_monitoring_check():
+    hc = _hc(**{"policy.monitoring_level": ("dim", "Dynamic Intelligence Mode Enabled")})
+    evaluate(hc, load_rules())
+    row = next(r for r in hc.rows_policy if r.key == "policy.monitoring_level")
+    assert row.status != Status.CONCERN
+
+
+def test_latest_build_setting_and_top5(tmp_path):
+    import csv as _csv
+    p = tmp_path / "Apex One Security Agent List.csv"
+    builds = ["14.0.20731"] * 4 + ["14.0.20524"] * 9 + ["14.0.20522"] * 5 + ["14.0.20422"] * 12 + \
+             ["14.0.20372"] * 2 + ["14.0.20315"] * 3 + ["14.0.14320"] * 44
+    with p.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["Connection Status", "Agent Program", "Smart Scan Agent Pattern",
+                                            "Platform", "Restart Required", "Scan Method"])
+        w.writeheader()
+        for b in builds:
+            w.writerow({"Connection Status": "Online", "Agent Program": b, "Smart Scan Agent Pattern": "21.363.00",
+                        "Platform": "Windows 11", "Restart Required": "No", "Scan Method": "Smart Scan"})
+    _, m = agentlist.extract(p, latest_build="14.0.20958")
+    assert m["latest_build"] == "14.0.20958" and m["outdated_agents"] == len(builds)
+    lines = m["build_breakdown"].split("\n")
+    assert len(lines) == 6 and lines[0] == "14.0.20731 - 4" and lines[-1] == "14.0.x - 47"
+    _, m2 = agentlist.extract(p)
+    assert m2["latest_build"] == "14.0.20731" and m2["outdated_agents"] == len(builds) - 4

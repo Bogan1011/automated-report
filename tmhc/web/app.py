@@ -39,7 +39,8 @@ MAX_UPLOAD = 1024 * 1024 * 1024        # 1 GB per file
 SESSION_HOURS = 12
 COOKIE = "tmhc_session"
 EVIDENCE_EXT = {".docx", ".zip", ".csv", ".cmpolicy"}
-PRODUCTS = ["Standard Endpoint Protection"]   # products with a rule pack; more as packs are added
+PRODUCTS = ["Standard Endpoint Protection"]
+BUILD_RE = re.compile(r"\d+\.\d+\.\d+(\.\d+)?")   # products with a rule pack; more as packs are added
 
 
 # --------------------------------------------------------------------------
@@ -180,6 +181,7 @@ def _profile_from_form(form: dict, cfg: dict, ev: dict, old: Optional[dict] = No
         "location": form.get("location", "").strip() or "Remotely",
         "customer_attendance": form.get("customer_attendance", "").strip() or "Console Access",
         "trend_attendance": form.get("trend_attendance", "").strip() or form.get("prepared_by", "").strip(),
+        "latest_agent_build": form.get("latest_agent_build", "").strip() or d.get("latest_agent_build", ""),
     })
     evidence = dict(prof.get("evidence") or {})
     evidence.update(ev)
@@ -308,6 +310,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                 "location": d.get("location", "Remotely"),
                 "customer_attendance": d.get("customer_attendance", "Console Access"),
                 "trend_attendance": d.get("trend_attendance", d.get("prepared_by", "")),
+                "latest_agent_build": d.get("latest_agent_build", ""),
                 "report_date": dt.date.today().isoformat()}
         return render(request, "new.html", form=form, products=PRODUCTS, error=None,
                       has_zip_password=bool(d.get("zip_password")))
@@ -327,6 +330,9 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
 
         if not name:
             return fail("Enter the client name.")
+        if not BUILD_RE.fullmatch(form.get("latest_agent_build", "").strip()):
+            return fail("Enter Trend's latest Apex One agent build (e.g. 14.0.20958). "
+                        "Save it in Settings so it is filled in for every client.")
         if (c["inbox"] / name).exists():
             return fail(f"A client folder '{name}' already exists - open it from the list to replace its evidence.")
         uploads = [u for u in [screenshots_docx, logs_zip, *extra] if u is not None and u.filename]
@@ -530,6 +536,12 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                   "customer_attendance", "trend_attendance"):
             if k in form:
                 d[k] = form[k].strip()
+        build = form.get("latest_agent_build", "").strip()
+        if build and not BUILD_RE.fullmatch(build):
+            raise HTTPException(400, "latest agent build must look like 14.0.20958")
+        if "latest_agent_build" in form and build != d.get("latest_agent_build", ""):
+            d["latest_agent_build"] = build
+            d["latest_agent_build_updated"] = dt.date.today().isoformat() if build else ""
         if form.get("zip_password"):                   # blank = keep the current one
             d["zip_password"] = form["zip_password"]
         if form.get("clear_zip_password") == "1":

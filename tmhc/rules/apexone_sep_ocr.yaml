@@ -228,3 +228,46 @@ fields:
     min_score: 80
     display: "{} seconds"
     trust: 0.95
+
+  # ---------------- policy pages (Vision One Standard Endpoint Protection) --
+  # The left-hand menu lists every page name on every capture, so pages are
+  # recognised by phrases that only appear in their content.
+  policy.dynamic_intelligence_mode:
+    page_all: ["Scan Methods", "Conventional scan"]
+    kind: checkbox
+    label: Enable Dynamic Intelligence Mode
+    derive:
+      # with DIM on, the console greys the levels out on every page
+      - when: "True"
+        set:
+          policy.monitoring_level: [dim, "Dynamic Intelligence Mode Enabled"]
+          policy.pml.monitoring_level: [dim, "Dynamic Intelligence Mode Enabled"]
+          policy.sc.monitoring_level: [dim, "Dynamic Intelligence Mode Enabled"]
+
+  policy.scheduled.schedule:
+    page_all: ["Monthly, on day", "Weekly, every", "Files to Scan"]
+    kind: radio_ordered
+    options:
+      - {label: Daily, value: daily, display: Daily}
+      - {label: "Weekly, every", value: weekly, display: Weekly}
+      - {label: "Monthly, on day", value: monthly, display: Monthly}
+      - {label: "Monthly, on the", value: monthly, display: Monthly}
+
+  policy.vp.enabled:
+    page: ["Intrusion Prevention Rules", "Network Engine Settings"]
+    kind: checkbox
+    label: Enable Vulnerability Protection
+
+  policy.vp.profile:
+    page_all: ["Intrusion Prevention Rules", "Profile:"]
+    kind: radio
+    options:
+      - {label: Recommended, display: Recommended}
+      - {label: Aggressive, display: Aggressive}
+
+  policy.vp.network_engine_mode:
+    page: ["Network Engine Detection Mode"]
+    kind: radio
+    options:
+      - {label: Inline, display: Inline}
+      - {label: "Tap (Detect-only)", display: "Tap (Detect-only)", min_score: 75}

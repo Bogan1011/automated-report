@@ -12,7 +12,7 @@
 #   first_enabled      first element of a (desktop, server) tuple is truthy
 #   equals: X          value or display equals X (case-insensitive)
 #   in: [X, Y]         value or display is one of the list
-#   contains: X        display contains X
+#   contains: X        display contains X (a list: contains any of them)
 #   lte: N / gte: N    numeric compare on value
 #   zero               value == 0
 #   configured         display starts with "Configured"
@@ -186,7 +186,7 @@ policy:
         - {component: Agent Scan Method, recommended: Smart Scan, key: policy.scan_method, check: {equals: smart}}
         - {component: Dynamic intelligence Mode, recommended: Enable, key: policy.dynamic_intelligence_mode, check: enabled,
            gap: "Dynamic Intelligence Mode is disabled. It is recommended to enable this feature so the agent can automatically adjust monitoring levels and optimize security responses based on detected threats, user behavior, and system activity."}
-        - {component: Monitoring Level, recommended: Detection-2 (Moderate) Prevention-2 ( Moderate), key: policy.monitoring_level, check: {contains: "Detection-2"}, pass: info}
+        - {component: Monitoring Level, recommended: Detection-2 (Moderate) Prevention-2 ( Moderate), key: policy.monitoring_level, check: {contains: ["Detection-2", "Dynamic Intelligence Mode"]}, pass: info}
 
   # The four scan blocks share one template; `{p}` is replaced with the
   # fact prefix and rows tagged `only:` are emitted for those blocks only.
@@ -245,7 +245,7 @@ policy:
     - heading: Behavior Monitoring
       rows:
         - {group: Rules, recommended: "Malware Behavior Blocking: Enable", key: policy.bm.malware_behaviour_blocking, check: enabled, fail: critical}
-        - {group: Rules, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.monitoring_level, check: {contains: Detection-2}}
+        - {group: Rules, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.monitoring_level, check: {contains: ["Detection-2", "Dynamic Intelligence Mode"]}}
         - {group: Rules, recommended: "Threats to block: Known and potential threats", key: policy.bm.threats_to_block, check: {contains: potential}}
         - {group: Rules, recommended: "Protect documents against unauthorized encryption or modification: Enable", key: policy.bm.protect_documents, check: enabled, fail: critical,
            gap: "Ransomware document protection is disabled in Behaviour Monitoring, recommended to enable it to protect documents against unauthorized encryption or modification."}
@@ -261,7 +261,7 @@ policy:
       rows:
         - {group: Detection Settings, recommended: "PML : Enable", key: policy.pml.enabled, check: enabled, fail: critical,
            gap: "Predictive Machine Learning is disabled, recommended to enable it to detect unknown and zero-day threats."}
-        - {group: Detection Settings, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.pml.monitoring_level, check: {contains: Detection-2}}
+        - {group: Detection Settings, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.pml.monitoring_level, check: {contains: ["Detection-2", "Dynamic Intelligence Mode"]}}
         - {group: Detection Settings, recommended: "File : Enable-Quarantine", key: policy.pml.file_action, check: {contains: Quarantine}}
         - {group: Detection Settings, recommended: "Process : Enable-Terminate", key: policy.pml.process_action, check: {contains: Terminate}}
         - {component: Exceptions, recommended: Review, key: policy.pml.exceptions, check: info}
@@ -280,7 +280,7 @@ policy:
       rows:
         - {group: Suspicious Connection, recommended: "Detect network connections made to addresses in the Global C&C IP list: Enable - Block", key: policy.sc.global_cc_list, check: {contains: "Enabled - Block"}}
         - {group: Suspicious Connection, recommended: "Detect connections using malware network fingerprinting: Enable-Block", key: policy.sc.network_fingerprinting, check: {contains: "Enabled - Block"}}
-        - {group: Suspicious Connection, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.sc.monitoring_level, check: {contains: Detection-2}}
+        - {group: Suspicious Connection, recommended: "Monitoring Level Detection -2 Moderate Prevention-2 Moderate", key: policy.sc.monitoring_level, check: {contains: ["Detection-2", "Dynamic Intelligence Mode"]}}
         - {group: Suspicious Connection, recommended: "Clean suspicious connections when C&C callback is detected: Enable", key: policy.sc.clean_on_cc, check: enabled}
     - heading: Vulnerability Protection
       rows:

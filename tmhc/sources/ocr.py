@@ -390,6 +390,49 @@ def _number_box(page: Page, spec: dict, key: str) -> Optional[dict]:
     return None
 
 
+def _radio_ordered(page: Page, spec: dict, key: str) -> Optional[dict]:
+    """Radio buttons in a fixed vertical order, read by position.
+
+    OCR often drops the text of the selected option (the filled radio is
+    read as a glyph and swallows the word), so options found by text only
+    fix the radio column and the row spacing; every option's row is then
+    probed at its expected position.
+    """
+    opts = spec["options"]
+    found = []
+    for i, opt in enumerate(opts):
+        for m in page.find_all(opt["label"], opt.get("min_score", 85))[:2]:
+            if not _in_band(page, m, spec):
+                continue
+            c = _probe(page, m)
+            if c is not None:
+                found.append((i, m, c))
+                break
+    if len(found) < 2:
+        return None
+    found.sort(key=lambda f: f[0])
+    (i0, m0, c0), (i1, m1, _) = found[0], found[-1]
+    if i1 == i0:
+        return None
+    step = (m1.y - m0.y) / (i1 - i0)
+    if step < 10:                                   # rows must be stacked vertically
+        return None
+    col_x = min(c["x"] for _, _, c in found)
+    states = []
+    for i, opt in enumerate(opts):
+        y = m0.y + (i - i0) * step
+        probe = Match(opt["label"], col_x + 14, y, m0.h, col_x + 60, 100, [])
+        c = page.control_left_of(probe, search=20)
+        states.append(c["on"] if c else None)
+    on = [i for i, st in enumerate(states) if st]
+    if len(on) != 1 or sum(1 for st in states if st is not None) < len(opts) - 1:
+        return None                                 # ambiguous: leave it for the checklist
+    opt = opts[on[0]]
+    conf = 0.9 * spec.get("trust", 1.0)
+    return _result(key, opt.get("value", opt["display"]), opt["display"], conf,
+                   f"(o) option {on[0] + 1} of {len(opts)}: {opt['label']}")
+
+
 def _text(page: Page, spec: dict, key: str) -> Optional[dict]:
     for rule in spec["patterns"]:
         mt = re.search(rule["re"], page.text, re.I)
@@ -410,36 +453,74 @@ def _toggles(page: Page, spec: dict, key: str) -> Optional[dict]:
 
 
 def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
-    """Licence table: the row with the most units is the main endpoint licence."""
-    rows = []
-    for ln in page.lines:
-        line = " ".join(w.t for w in ln)
-        if not re.search(spec.get("row_re", r"Endpoint|Security|Protection"), line, re.I):
-            continue
-        dates = [d for d in re.findall(r"(20\d\d)-(\d\d)-(\d\d)", line)
-                 if 2015 <= int(d[0]) <= 2045]
-        nums = [int(n.replace(",", "")) for n in re.findall(r"(?<![\d-])(\d{1,3}(?:,\d{3})+|\d{1,6})(?![\d-])", line)]
-        if not dates:
-            continue
-        units = next((n for n in nums if n > 0), None)
+    """Licence table: the endpoint licence that runs longest is the one in force.
+
+    Expired licences stay listed in the console (red cross), so neither the
+    first row nor the biggest one can be trusted. Credit-based licences
+    (TrendAI Flex) show "Multiple" units on their own row and the endpoint
+    allocation on an indented row underneath.
+    """
+    row_re = re.compile(spec.get("row_re", r"Endpoint|Security|Protection"), re.I)
+    lines = [" ".join(w.t for w in ln) for ln in sorted(page.lines, key=lambda ln: (ln[0].y, ln[0].x))]
+
+    def dates(line):
+        return [d for d in re.findall(r"(20\d\d)-(\d\d)-(\d\d)", line) if 2015 <= int(d[0]) <= 2045]
+
+    def first_int(line):
+        for n in re.findall(r"(?<![\d-])(\d{1,3}(?:,\d{3})+|\d{1,6})(?![\d-])", line):
+            v = int(n.replace(",", ""))
+            if v > 0:
+                return v
+        return None
+
+    def clean_name(line):
         name = re.split(r"\s+(Paid|Trial|Evaluation|Free)\b", line)[0]
-        name = re.sub(r"^[^A-Za-z]+", "", name).strip()
-        rows.append((units or 0, dates, name, line))
+        name = re.sub(r"^(?:[^A-Za-z]+|[a-z]{1,3}\s+)+", "", name)      # row icons / expand arrow
+        return re.sub(r"\bTrendAl\b", "TrendAI", name).strip()             # common OCR slip
+
+    rows = []
+    for i, line in enumerate(lines):
+        ds = dates(line)
+        if not ds or not re.search(r"\b(Paid|Trial|Evaluation|Free)\b", line):
+            continue
+        name, units = clean_name(line), None
+        sub = None
+        if re.search(r"\bMultiple\b", line) or first_int(line.split(" Paid ")[-1]) is None:
+            # credit licence: allocation rows follow, without dates
+            for nxt in lines[i + 1:i + 6]:
+                if dates(nxt):
+                    break
+                if row_re.search(nxt) and first_int(nxt):
+                    sub = nxt
+                    break
+        if sub:
+            units = first_int(sub)
+            name = f"{name} - {re.split(r'\s+\d', sub)[0].strip()}"
+        else:
+            after_type = re.split(r"\b(?:Paid|Trial|Evaluation|Free)\b", line, maxsplit=1)[-1]
+            units = first_int(re.sub(r"TrendA[Il]\S*", "", after_type))
+        if not (row_re.search(line) or sub):
+            continue
+        rows.append((max(ds), units or 0, name, line + (f" / {sub}" if sub else "")))
     if not rows:
         return []
-    units, dates, name, line = max(rows, key=lambda r: r[0])
-    expiry = max(dates)
+    expiry, units, name, line = max(rows, key=lambda r: (r[0], r[1]))
     iso = "-".join(expiry)
     out = [_result(f"{key_prefix}.expiry", iso, dt.date.fromisoformat(iso).strftime("%d %B %Y"), 0.9, line)]
     if units:
         out.append(_result(f"{key_prefix}.seats", units, str(units), 0.85, line))
     if name:
         out.append(_result(f"{key_prefix}.name", name, name, 0.8, line))
+    others = [r for r in rows if r[0] < expiry]
+    if others:
+        out.append(_result(f"{key_prefix}.expired_others", len(others),
+                           f"{len(others)} older licence row(s) also listed", 0.8, ""))
     return out
 
 
 KINDS = {"checkbox": _checkbox, "all_checked": _all_checked, "radio": _radio,
-         "radio_rows": _radio_rows, "text": _text, "toggles": _toggles, "number_box": _number_box}
+         "radio_rows": _radio_rows, "text": _text, "toggles": _toggles, "number_box": _number_box,
+         "radio_ordered": _radio_ordered}
 
 
 def read_page(page: Page, specs: dict, wanted: Optional[set] = None) -> list[dict]:
@@ -448,6 +529,8 @@ def read_page(page: Page, specs: dict, wanted: Optional[set] = None) -> list[dic
         if wanted is not None and key not in wanted and not key.startswith("license"):
             continue
         if spec.get("page") and not page.has_any(spec["page"]):
+            continue
+        if spec.get("page_all") and not all(page.has_any([p]) for p in spec["page_all"]):
             continue
         kind = spec["kind"]
         try:

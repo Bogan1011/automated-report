@@ -96,8 +96,13 @@ one and prints the address (e.g. `http://192.168.1.70:8090`). Use
 4. **Download report** (and the review workbook). In Word, accept the prompt
    to update the table of contents.
 
-**Settings** (website): default names for new health checks, the logs zip
-password used for every client, and your login password. More logins:
+**Settings** (website): default names for new health checks, **Trend's
+latest Apex One agent build** (set it when Trend releases a new one; every
+new health check starts with it and asks you to confirm it), the logs zip
+password used for every client, and your login password. The latest build
+drives the "Latest:" recommendation and the outdated-agent counts; the
+build list in the report shows the 5 newest builds and one line for the
+rest (`options.build_rows` to change). More logins:
 `tmhc web --set-password <name>` on the server.
 
 The website only answers the office network (10.x, 172.16-31.x, 192.168.x)

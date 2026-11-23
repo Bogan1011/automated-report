@@ -58,6 +58,7 @@ defaults:
   customer_attendance: Console Access
   trend_attendance: Your Name
   zip_password: ""        # the password your log zips usually use
+  latest_agent_build: ""  # Trend's current Apex One agent build, e.g. 14.0.20958
 
 options:
   rules: apexone_sep
@@ -153,6 +154,7 @@ def ensure_profile(folder: Path, cfg: dict) -> Path:
         "location": d.get("location", "Remotely"),
         "customer_attendance": d.get("customer_attendance", "Console Access"),
         "trend_attendance": d.get("trend_attendance", d.get("prepared_by", "")),
+        "latest_agent_build": d.get("latest_agent_build", ""),
         "evidence": {**ev, "zip_password": d.get("zip_password", ""), "checklist": "checklist.xlsx"},
         "options": dict(cfg.get("options") or {"reader": "ocr"}),
     }

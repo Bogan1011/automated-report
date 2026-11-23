@@ -118,6 +118,35 @@ def _decode_cust_action(raw: str) -> str:
     return ", ".join(parts)
 
 
+DIM_LEVEL_TEXT = "Dynamic Intelligence Mode Enabled"
+SCHEDULE_CODES = {2: "Weekly", 3: "Daily"}
+VP_STATE = {0: True, 2: False}      # vulnerabilityShieldState, confirmed against consoles
+
+
+def _level_text(m: dict) -> str:
+    return (f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
+            f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
+
+
+def _monitoring_level(m: dict, key: str, add, infer) -> None:
+    """Monitoring level of one module.
+
+    With Dynamic Intelligence Mode on, the console replaces the levels with
+    "Dynamic Intelligence Mode Enabled" and the export omits the DIM flag
+    and both levels. That absence is recorded as an inference (lower
+    priority than a screenshot), never as a statement from the export.
+    """
+    if "DetectionLevel" in m or "PreventionLevel" in m:
+        if _truthy(m.get("DIM")):
+            add(key, "dim", DIM_LEVEL_TEXT)
+        else:
+            add(key, (m.get("DetectionLevel"), m.get("PreventionLevel")), _level_text(m))
+    elif "DIM" in m:
+        add(key, "dim" if _truthy(m["DIM"]) else None, DIM_LEVEL_TEXT if _truthy(m["DIM"]) else "Not set")
+    else:
+        infer(key, "dim", DIM_LEVEL_TEXT)
+
+
 class PolicyExport:
     """Loaded view over a .cmpolicy file."""
 
@@ -283,12 +312,15 @@ def _scan_target_facts(m: dict, prefix: str, out: list[Fact], evidence: str) -> 
 
     # Scheduled-scan-only extras
     if "Frequency" in m:
-        freq = {0: "Daily", 1: "Daily", 2: "Weekly", 3: "Monthly"}.get(_int(m["Frequency"]), str(m["Frequency"]))
-        days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        disp = freq
-        if freq == "Weekly" and isinstance(_int(m.get("DayOfWeek")), int) and 0 <= _int(m["DayOfWeek"]) <= 6:
-            disp = f"Weekly ({days[_int(m['DayOfWeek'])]})"
-        add("schedule", freq.lower(), disp)
+        # Codes confirmed against real consoles: 2 = Weekly, 3 = Daily. Any other
+        # code is left for the screenshot/checklist rather than guessed.
+        freq = SCHEDULE_CODES.get(_int(m["Frequency"]))
+        if freq:
+            days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            disp = freq
+            if freq == "Weekly" and isinstance(_int(m.get("DayOfWeek")), int) and 0 <= _int(m["DayOfWeek"]) <= 6:
+                disp = f"Weekly ({days[_int(m['DayOfWeek'])]})"
+            add("schedule", freq.lower(), disp)
     if "EnableAutoStopScheduleScan" in m:
         on = _truthy(m["EnableAutoStopScheduleScan"])
         add("auto_stop", on,
@@ -319,17 +351,22 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         out.append(Fact(key=key, value=value, display=display,
                         source=Source.POLICY_EXPORT, evidence=ev))
 
+    def infer(key: str, value: Any, display: str) -> None:
+        out.append(Fact(key=key, value=value, display=display, source=Source.POLICY_INFERRED,
+                        confidence=0.7, evidence=f"{ev} (inferred: setting absent from export)"))
+
     # ---- scan method -----------------------------------------------------
     m = pol.mod("scan_method")
     if m:
         smart = _truthy(m.get("CloudScanType"))
         add("policy.scan_method", "smart" if smart else "conventional",
             "Smart Scan" if smart else "Conventional Scan")
-        add("policy.dynamic_intelligence_mode", _truthy(m.get("DIM")), _onoff(m.get("DIM")))
-        add("policy.monitoring_level",
-            (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
-            f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
+        if "DIM" in m:
+            add("policy.dynamic_intelligence_mode", _truthy(m["DIM"]), _onoff(m["DIM"]))
+        elif "DetectionLevel" not in m and "PreventionLevel" not in m:
+            # exports from DIM-enabled policies carry neither the flag nor the levels
+            infer("policy.dynamic_intelligence_mode", True, "Enabled")
+        _monitoring_level(m, "policy.monitoring_level", add, infer)
 
     # ---- the four scan types --------------------------------------------
     for mod_name, prefix in (
@@ -377,10 +414,7 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
     m = pol.mod("predictive_ml")
     if m:
         add("policy.pml.enabled", _truthy(m.get("ENABLE_TRENDX")), _onoff(m.get("ENABLE_TRENDX")))
-        add("policy.pml.monitoring_level",
-            (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
-            f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
+        _monitoring_level(m, "policy.pml.monitoring_level", add, infer)
         file_on = _truthy(m.get("ENABLE_FILE_ACTION"))
         add("policy.pml.file_action", (file_on, m.get("FILE_ACTION_FOR_TRENDX")),
             "Enable-Quarantine" if file_on and str(m.get("FILE_ACTION_FOR_TRENDX")) == "0"
@@ -435,26 +469,24 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         rr = _truthy(m.get("EnableRR"))
         add("policy.sc.network_fingerprinting", (rr, m.get("ActionForRR")),
             f"{_onoff(rr)} - {'Block' if str(m.get('ActionForRR')) == '1' else 'Log'}")
-        add("policy.sc.monitoring_level",
-            (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
-            f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
+        _monitoring_level(m, "policy.sc.monitoring_level", add, infer)
         add("policy.sc.clean_on_cc", _truthy(m.get("EnableCNP")), _onoff(m.get("EnableCNP")))
 
     # ---- vulnerability protection ---------------------------------------
     m = pol.mod("vulnerability_protection")
     if m:
-        state = m.get("vulnerabilityShieldState")
-        enabled = str(state) == "1"
-        add("policy.vp.enabled", enabled, _onoff(enabled))
-        rules = m.get("ipsRules") or {}
-        total = sum(len(rules.get(k) or []) for k in
-                    ("enabledList", "preventList", "logOnlyList"))
-        add("policy.vp.profile", total, f"{total} rules assigned" if total else "N/A")
-        mode = (m.get("networkEngineSettings") or {}).get(
-            "settings.configuration.networkDriverMode")
-        add("policy.vp.network_engine_mode", mode,
-            {"1": "Inline", "0": "Tap"}.get(str(mode), "N/A") if enabled else "N/A")
+        enabled = VP_STATE.get(_int(m.get("vulnerabilityShieldState")))
+        if enabled is not None:                  # unknown codes: left to screenshot / checklist
+            add("policy.vp.enabled", enabled, _onoff(enabled))
+            rules = m.get("ipsRules") or {}
+            total = sum(len(rules.get(k) or []) for k in ("enabledList", "preventList", "logOnlyList"))
+            if not enabled:
+                add("policy.vp.profile", None, "N/A")
+                add("policy.vp.network_engine_mode", None, "N/A")
+            elif total:
+                add("policy.vp.profile", total, f"{total} rules assigned")
+            # Profile (Recommended/Aggressive) and engine mode are not in the export
+            # when VP is on - read from the screenshot or filled in on the website.
 
     # ---- device control --------------------------------------------------
     m = pol.mod("device_control")
@@ -474,8 +506,12 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         cf = m.get("clientFormat") or {}
         add("policy.ac.enabled", _truthy(cf.get("serviceEnable")),
             _onoff(cf.get("serviceEnable")))
-        add("policy.ac.lockdown", _truthy(cf.get("whiteListCheck")),
-            _onoff(cf.get("whiteListCheck")))
+        lock = _truthy(cf.get("whiteListCheck"))
+        actions = ("Lockdown: Block all applications not identified during the last inventory scan"
+                   if lock else "Allow: All other applications can execute")
+        if lock:
+            actions += f"\nEnable assessment mode: {_onoff(cf.get('isReportOnly'))}"
+        add("policy.ac.lockdown", lock, actions)
         add("policy.ac.assessment_mode", _truthy(cf.get("isReportOnly")),
             _onoff(cf.get("isReportOnly")))
         add("policy.ac.max_log_age", cf.get("maxLogAgeDays"),

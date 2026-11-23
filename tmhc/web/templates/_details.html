@@ -7,6 +7,7 @@
 <div><label>Trend Micro attendance</label><input type="text" name="trend_attendance" value="{{ f.trend_attendance or '' }}"></div>
 <div><label>Customer attendance</label><input type="text" name="customer_attendance" value="{{ f.customer_attendance or '' }}"></div>
 <div><label>Location</label><input type="text" name="location" value="{{ f.location or '' }}"></div>
+<div><label>Latest Apex One agent build <span class="hint">Trend's current release - used for the recommendation and outdated-agent count</span></label><input type="text" name="latest_agent_build" value="{{ f.latest_agent_build or '' }}" placeholder="e.g. 14.0.20958" pattern="\d+\.\d+\.\d+(\.\d+)?" required></div>
 <div><label>Health check date <span class="hint">blank = read from screenshots</span></label><input type="date" name="check_date" value="{{ f.check_date if f.check_date and f.check_date!='auto' else '' }}"></div>
 <div><label>Report date</label><input type="date" name="report_date" value="{{ f.report_date or '' }}"></div>
 <div><label>Quarter <span class="hint">blank = from check date</span></label><input type="text" name="quarter" value="{{ f.quarter if f.quarter and f.quarter!='auto' else '' }}" placeholder="e.g. Q4 2026"></div>

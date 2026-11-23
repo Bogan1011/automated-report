@@ -100,7 +100,8 @@ def run_check(check: Any, fact: Fact, hc: HealthCheck) -> Optional[bool]:
         opts = {_norm(a) for a in arg}
         return _norm(v) in opts or _norm(d) in opts
     if kind == "contains":
-        return _norm(arg) in _norm(d) or _norm(arg) in _norm(v)
+        opts = arg if isinstance(arg, list) else [arg]
+        return any(_norm(a) in _norm(d) or _norm(a) in _norm(v) for a in opts)
     if kind in ("lte", "gte"):
         try:
             n = float(v)

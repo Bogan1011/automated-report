@@ -56,7 +56,8 @@ def test_upload_creates_client_folder_with_profile(site):
     client, _, inbox = site
     _login(client)
     r = client.post("/new", data={"client_name": "Acme Industries Pvt Ltd", "prepared_by": "Analyst",
-                                  "approved_by": "Boss", "report_date": "2026-11-23"},
+                                  "approved_by": "Boss", "report_date": "2026-11-23",
+                                  "latest_agent_build": "14.0.20958"},
                     files={"screenshots_docx": ("acme SS.docx", _docx()), "logs_zip": ("logs.zip", _logs_zip())},
                     follow_redirects=False)
     assert r.status_code == 303
@@ -74,11 +75,13 @@ def test_upload_creates_client_folder_with_profile(site):
 def test_rejects_bad_names_and_types(site):
     client, _, inbox = site
     _login(client)
-    r = client.post("/new", data={"client_name": "../../etc"}, files={"logs_zip": ("l.zip", _logs_zip())},
+    r = client.post("/new", data={"client_name": "../../etc", "latest_agent_build": "14.0.1"},
+                    files={"logs_zip": ("l.zip", _logs_zip())},
                     follow_redirects=False)
     assert r.status_code == 303
     assert (inbox / "etc").exists() and not (inbox.parent / "etc").exists()
-    r = client.post("/new", data={"client_name": "X"}, files={"extra": ("run.sh", b"#!/bin/sh")})
+    r = client.post("/new", data={"client_name": "X", "latest_agent_build": "14.0.1"},
+                    files={"extra": ("run.sh", b"#!/bin/sh")})
     assert "only .docx" in r.text
     assert client.get("/client/..%2F..").status_code == 404
 
@@ -101,3 +104,18 @@ def test_settings_keep_zip_password_when_blank(site):
 def test_safe_name():
     assert webapp.safe_name("  Acme / Industries: <Pvt> Ltd. ") == "Acme Industries Pvt Ltd"
     assert webapp.safe_name("..") == ""
+
+
+def test_new_check_requires_latest_build(site):
+    client, _, inbox = site
+    _login(client)
+    r = client.post("/new", data={"client_name": "Acme"}, files={"logs_zip": ("l.zip", _logs_zip())})
+    assert "latest Apex One agent build" in r.text and not (inbox / "Acme").exists()
+
+
+def test_settings_latest_build_prefills_form(site):
+    client, cfg_path, _ = site
+    _login(client)
+    client.post("/settings", data={"latest_agent_build": "14.0.20958"})
+    assert yaml.safe_load(cfg_path.read_text())["defaults"]["latest_agent_build"] == "14.0.20958"
+    assert 'value="14.0.20958"' in client.get("/new").text
