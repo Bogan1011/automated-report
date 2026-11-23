@@ -54,43 +54,52 @@ readable label or control (and anything not in the screenshots) show as
   `tmhc/rules/apexone_sep_ocr.yaml` says where each setting is on screen.
 * **Your own template** - made from one of your finished reports.
 
-## Ubuntu VM (recommended): drop files, get a report
+## Ubuntu VM (recommended): upload website
 
 Tested on Ubuntu 24.04 with 2 vCPU / 8 GB RAM.
 
 ```bash
 git clone https://github.com/Bogan1011/automated-report.git
 cd automated-report
-./deploy/install.sh --samba
+./deploy/install.sh
 ```
 
-The installer asks for the names printed in every report and the usual
-logs-zip password, then sets up a background service (`tmhc-watch`) and a
-Windows share. Set the share password when asked (or later with
-`sudo smbpasswd -a $USER`).
+The installer asks for the names printed in every report, the usual
+logs-zip password and a website login, then starts two background
+services: `tmhc-web` (the website) and `tmhc-watch` (builds the reports).
+The website uses port **8090**; if that port is taken it uses the next free
+one and prints the address (e.g. `http://192.168.1.70:8090`). Use
+`--port=NNNN` to choose. Add `--samba` for a Windows share as well.
 
-**Every health check after that:**
+**Every health check:**
 
-1. From Windows open `\\<vm-ip>\healthcheck\inbox`, make a folder named after
-   the client (e.g. `Acme Industries Private Limited`) and copy in the
-   screenshot Word file and the logs zip.
-2. Wait ~4 minutes. The folder gets `output/` (the report + review
-   workbook), `STATUS.txt`, `profile.yaml` and `checklist.xlsx`.
-3. Open `checklist.xlsx`, fill any blank yellow cells, save. The report
-   rebuilds by itself within a minute.
-4. Open the report in Word and accept the prompt to update the table of
-   contents.
+1. Open the website, **New health check**: client name, prepared/approved
+   by, dates (blank check date = read from the screenshots), then attach the
+   screenshot Word file and the logs zip. **Upload and build report.**
+2. The client page shows an upload check straight away (pictures found, zip
+   opened with the saved password, policy export and agent list present),
+   then the build status. About 4 minutes on 2 vCPU.
+3. **Fill checklist**: settings the screenshots didn't show are blank;
+   readings from screenshots are pre-filled to check. **Save** - the report
+   rebuilds in under a minute.
+4. **Download report** (and the review workbook). In Word, accept the prompt
+   to update the table of contents.
 
-The check date and quarter are read from the screenshots' taskbar clock.
-To change anything for one client (legal name, dates, people), edit that
-folder's `profile.yaml`; saving it rebuilds the report.
+**Settings** (website): default names for new health checks, the logs zip
+password used for every client, and your login password. More logins:
+`.venv/bin/python -m tmhc web --set-password <name>` on the server.
+
+The website only answers the office network (10.x, 172.16-31.x, 192.168.x)
+and its service cannot reach the internet. It uses a login with
+PBKDF2-hashed passwords; traffic is plain HTTP inside the LAN.
 
 | | |
 |---|---|
-| Settings for all clients | `~/healthcheck/config.yaml` |
-| Live log | `journalctl -u tmhc-watch -f` |
+| Settings file | `~/healthcheck/config.yaml` (the website edits it) |
+| Client folders | `~/healthcheck/inbox/<Client>/` (`output/` holds the report) |
+| Live log | `journalctl -u tmhc-web -u tmhc-watch -f` |
 | Update | `cd ~/automated-report && git pull && ./deploy/install.sh` |
-| No Samba? | copy files with WinSCP / `scp` into `~/healthcheck/inbox/<Client>/` |
+| Without the website | copy files into `~/healthcheck/inbox/<Client>/` (Samba or WinSCP) - same result |
 
 **Optional local AI (`--with-ai`).** Installs Ollama with `qwen2.5vl:3b`
 (CPU, ~3 GB) and adds 4 GB swap; the AI then reads only what OCR could not.

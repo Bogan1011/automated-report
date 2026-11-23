@@ -4,7 +4,9 @@
 #
 #   git clone https://github.com/Bogan1011/automated-report.git
 #   cd automated-report
-#   ./deploy/install.sh              # OCR reader, watch folder, background service
+#   ./deploy/install.sh              # OCR reader, watch folder, upload website, services
+#   ./deploy/install.sh --port=8090  # website port (default 8090; next free port if taken)
+#   ./deploy/install.sh --no-web     # no website, watch folder only
 #   ./deploy/install.sh --samba      # + Windows share  \\<vm-ip>\healthcheck
 #   ./deploy/install.sh --with-ai    # + local AI model (Ollama, qwen2.5vl:3b) for what OCR misses
 #
@@ -15,7 +17,7 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-SAMBA=0; WITH_AI=0; NONINTERACTIVE=0; NO_SERVICE=0
+SAMBA=0; WITH_AI=0; NONINTERACTIVE=0; NO_SERVICE=0; WEB=1; PORT=8090; PORT_SET=0
 INBOX_ROOT="$HOME/healthcheck"
 AI_MODEL="qwen2.5vl:3b"
 for arg in "$@"; do
@@ -24,9 +26,11 @@ for arg in "$@"; do
     --with-ai) WITH_AI=1 ;;
     --yes|-y) NONINTERACTIVE=1 ;;
     --no-service) NO_SERVICE=1 ;;
+    --no-web) WEB=0 ;;
+    --port=*) PORT="${arg#*=}"; PORT_SET=1 ;;
     --root=*) INBOX_ROOT="${arg#*=}" ;;
     --model=*) AI_MODEL="${arg#*=}" ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg"; exit 2 ;;
   esac
 done
@@ -35,6 +39,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$REPO/.venv"
 CONFIG="$INBOX_ROOT/config.yaml"
 SERVICE=/etc/systemd/system/tmhc-watch.service
+WEB_SERVICE=/etc/systemd/system/tmhc-web.service
 USER_NAME="$(id -un)"
 
 say()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -179,6 +184,77 @@ EOF
   fi
 fi
 
+# ---------------------------------------------------------------- website
+if [ "$WEB" = 1 ]; then
+  CUR_PORT=$(cd "$REPO" && "$VENV/bin/python" -c "import yaml,sys; c=yaml.safe_load(open(sys.argv[1])) or {}; print((c.get('web') or {}).get('port',''))" "$CONFIG")
+  port_busy() {   # something already answers on this port (e.g. the existing site on 8000)
+    "$VENV/bin/python" -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$1"
+  }
+  [ "$PORT_SET" = 0 ] && [ -n "$CUR_PORT" ] && PORT="$CUR_PORT"     # keep the saved port on re-runs
+  if pidof systemd >/dev/null && systemctl is-active --quiet tmhc-web 2>/dev/null; then
+    sudo systemctl stop tmhc-web                       # free our own port before checking it
+  fi
+  while port_busy "$PORT"; do warn "port $PORT is in use"; PORT=$((PORT+1)); done
+  say "Upload website on port $PORT"
+  ( cd "$REPO" && "$VENV/bin/python" - "$CONFIG" "$PORT" <<'PYWEB'
+import sys, yaml, secrets
+p, port = sys.argv[1], int(sys.argv[2])
+text = open(p).read(); cfg = yaml.safe_load(text)
+web = cfg.setdefault("web", {}); web["port"] = port; web.setdefault("host", "0.0.0.0")
+web.setdefault("secret", secrets.token_hex(32)); web.setdefault("users", {})
+cfg["inbox"] = str(cfg["inbox"])
+header = "".join(l for l in text.splitlines(True) if l.startswith("#"))
+open(p, "w").write(header + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+PYWEB
+  )
+  chmod 600 "$CONFIG"
+  HAS_USER=$(cd "$REPO" && "$VENV/bin/python" -c "import yaml,sys; print(len((yaml.safe_load(open(sys.argv[1])).get('web') or {}).get('users') or {}))" "$CONFIG")
+  if [ "$HAS_USER" = 0 ]; then
+    if [ -n "${TMHC_WEB_PASSWORD:-}" ]; then
+      ( cd "$REPO" && "$VENV/bin/python" -m tmhc web --config "$CONFIG" --set-password "${TMHC_WEB_USER:-$USER_NAME}" )
+    elif [ "$NONINTERACTIVE" = 0 ] && [ -t 0 ]; then
+      read -r -p "  Website login name [$USER_NAME]: " WEBUSER; WEBUSER=${WEBUSER:-$USER_NAME}
+      ( cd "$REPO" && "$VENV/bin/python" -m tmhc web --config "$CONFIG" --set-password "$WEBUSER" )
+    else
+      warn "create a website login with:  $VENV/bin/python -m tmhc web --config $CONFIG --set-password <name>"
+    fi
+  fi
+  if [ "$NO_SERVICE" = 0 ]; then
+    sudo tee "$WEB_SERVICE" >/dev/null <<EOF
+[Unit]
+Description=Health-check upload website
+After=network.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$REPO
+ExecStart=$VENV/bin/python -m tmhc web --config $CONFIG
+Restart=always
+RestartSec=5
+# answers the office network only and can never reach the internet
+IPAddressDeny=any
+IPAddressAllow=localhost 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if pidof systemd >/dev/null; then
+      sudo systemctl daemon-reload
+      sudo systemctl enable --now tmhc-web >/dev/null
+      sudo systemctl restart tmhc-web
+      sleep 2
+      systemctl is-active --quiet tmhc-web && echo "tmhc-web is running" || warn "website did not start: journalctl -u tmhc-web -n 50"
+    else
+      warn "systemd is not running here; start the website with: $VENV/bin/python -m tmhc web --config $CONFIG"
+    fi
+  fi
+  if command -v ufw >/dev/null && sudo ufw status | grep -q "Status: active"; then
+    sudo ufw allow from 192.168.0.0/16 to any port "$PORT" proto tcp >/dev/null
+    sudo ufw allow from 10.0.0.0/8 to any port "$PORT" proto tcp >/dev/null
+  fi
+fi
+
 # ---------------------------------------------------------------- samba (optional)
 if [ "$SAMBA" = 1 ]; then
   say "Sharing $INBOX_ROOT with Windows as \\\\<this-vm>\\healthcheck"
@@ -213,14 +289,16 @@ cat <<EOF
 ------------------------------------------------------------------
  Installed.
 
- Drop each client in its own folder:
+ $( [ "$WEB" = 1 ] && echo "Website:  http://${IP:-<vm-ip>}:${PORT}   (New health check -> upload -> download report)" )
+
+ Or drop each client in its own folder:
      $INBOX_ROOT/inbox/<Client Name>/   <- screenshots .docx + logs .zip
 $( [ "$SAMBA" = 1 ] && echo "     from Windows:  \\\\${IP:-<vm-ip>}\\healthcheck\\inbox\\<Client Name>\\" )
  The report appears in <Client Name>/output/ and STATUS.txt says what
  happened. Fill blanks in checklist.xlsx and save to rebuild.
 
  Settings:     $CONFIG
- Live log:     journalctl -u tmhc-watch -f
+ Live log:     journalctl -u tmhc-watch -u tmhc-web -f
  Update:       cd $REPO && git pull && ./deploy/install.sh
 ------------------------------------------------------------------
 EOF

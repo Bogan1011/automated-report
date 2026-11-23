@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Health Check Reports{% endblock %}</title><link rel="stylesheet" href="/static/style.css">
+{% block head %}{% endblock %}</head><body>
+<header><div class="bar"><a class="brand" href="/">Health Check <span>Reports</span></a>
+{% if user %}<nav><a href="/" class="{{ 'on' if active=='list' }}">Clients</a><a href="/new" class="{{ 'on' if active=='new' }}">New health check</a><a href="/settings" class="{{ 'on' if active=='settings' }}">Settings</a></nav>
+<div class="who">{{ user }}<form method="post" action="/logout"><button class="btn ghost small">Sign out</button></form></div>{% endif %}
+</div></header><main>{% block body %}{% endblock %}</main></body></html>

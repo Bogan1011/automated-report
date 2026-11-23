@@ -230,8 +230,8 @@ def process(folder: Path, cfg: dict) -> str:
         "",
     ]
     if missing:
-        lines += [f"{len(missing)} settings were not captured. Open checklist.xlsx, fill the yellow",
-                  "'Deployed' column for those rows and save - the report rebuilds by itself.",
+        lines += [f"{len(missing)} settings were not captured. Fill them in the checklist (website:",
+                  "'Fill checklist', or checklist.xlsx in this folder) and save - the report rebuilds.",
                   "Also check the screenshot readings in the review workbook (Source = Screenshot).", ""]
     else:
         lines += ["Every setting was captured. Spot-check screenshot readings in the review workbook.", ""]
@@ -269,6 +269,8 @@ def scan_once(cfg: dict, state: dict, force_settle: bool = False) -> bool:
         if time.time() - newest_change(fp) < settle:
             continue                                  # still copying / saving
         _log(f"[{folder.name}] building report...")
+        marker = folder / ".building"
+        marker.write_text(dt.datetime.now().isoformat(), encoding="utf-8")
         try:
             result = process(folder, cfg)
         except SystemExit as exc:                     # friendly errors from the CLI
@@ -280,6 +282,8 @@ def scan_once(cfg: dict, state: dict, force_settle: bool = False) -> bool:
             result = f"error: {exc}"
             (folder / "STATUS.txt").write_text("Could not build the report:\n\n" + traceback.format_exc(),
                                                encoding="utf-8")
+        finally:
+            marker.unlink(missing_ok=True)
         _log(f"[{folder.name}] {result}")
         state[folder.name] = {"fp": fingerprint(folder), "at": dt.datetime.now().isoformat(), "result": result}
         _save_state(inbox, state)
@@ -298,9 +302,32 @@ def main(argv=None) -> None:
     if a.once:
         scan_once(cfg, state, force_settle=True)
         return
+    for stale in cfg["inbox"].glob("*/.building"):     # left over from a crash/restart
+        stale.unlink(missing_ok=True)
     while True:
         try:
+            cfg = load_config(a.config)               # pick up settings changed on the website
+            state = _load_state(cfg["inbox"])
             scan_once(cfg, state)
         except Exception as exc:                      # never let the service die
             _log(f"scan error: {exc}")
         time.sleep(int(cfg.get("poll_seconds", 20)))
+
+
+# --------------------------------------------------------------------------
+# status for the website
+# --------------------------------------------------------------------------
+def client_status(folder: Path, state: dict | None = None) -> dict:
+    """waiting | queued | building | done | error, plus a one-line detail."""
+    if state is None:
+        state = _load_state(folder.parent)
+    if (folder / ".building").exists():
+        return {"status": "building", "detail": "Building the report..."}
+    if not find_evidence(folder):
+        return {"status": "waiting", "detail": "Upload the screenshots and/or logs"}
+    entry = state.get(folder.name) or {}
+    if entry.get("fp") == fingerprint(folder):
+        result = entry.get("result", "")
+        status = "done" if result.startswith("done") else "error"
+        return {"status": status, "detail": result, "at": entry.get("at", "")}
+    return {"status": "queued", "detail": "Queued - starts when the upload has settled"}

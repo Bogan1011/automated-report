@@ -71,7 +71,8 @@ def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
           client: str = "", prefill: dict[str, Fact] | None = None) -> Path:
     covered = set(covered)
     prefill = prefill or {}
-    keys = [k for k in catalogue if k not in covered and not k.startswith(("inventory.", "logs."))]
+    # platform.* extras feed no report row; leave them out so the list is only what matters
+    keys = [k for k in catalogue if k not in covered and not k.startswith(("inventory.", "logs.", "platform."))]
 
     wb = Workbook()
     ws = wb.active

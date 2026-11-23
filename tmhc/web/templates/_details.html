@@ -1,0 +1,13 @@
+<div class="grid">
+<div><label>Client name <span class="hint">as printed in the report</span></label><input type="text" name="client_name" value="{{ f.client_name or '' }}" required placeholder="e.g. Acme Industries Private Limited"></div>
+<div><label>Product</label><select name="product">{% for p in products %}<option {{ 'selected' if f.product==p }}>{{ p }}</option>{% endfor %}</select></div>
+<div><label>Prepared by</label><input type="text" name="prepared_by" value="{{ f.prepared_by or '' }}"></div>
+<div><label>Approved by</label><input type="text" name="approved_by" value="{{ f.approved_by or '' }}"></div>
+<div><label>Account owner</label><input type="text" name="account_owner" value="{{ f.account_owner or '' }}"></div>
+<div><label>Trend Micro attendance</label><input type="text" name="trend_attendance" value="{{ f.trend_attendance or '' }}"></div>
+<div><label>Customer attendance</label><input type="text" name="customer_attendance" value="{{ f.customer_attendance or '' }}"></div>
+<div><label>Location</label><input type="text" name="location" value="{{ f.location or '' }}"></div>
+<div><label>Health check date <span class="hint">blank = read from screenshots</span></label><input type="date" name="check_date" value="{{ f.check_date if f.check_date and f.check_date!='auto' else '' }}"></div>
+<div><label>Report date</label><input type="date" name="report_date" value="{{ f.report_date or '' }}"></div>
+<div><label>Quarter <span class="hint">blank = from check date</span></label><input type="text" name="quarter" value="{{ f.quarter if f.quarter and f.quarter!='auto' else '' }}" placeholder="e.g. Q4 2026"></div>
+</div>

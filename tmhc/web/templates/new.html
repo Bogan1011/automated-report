@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% set active='new' %}{% block body %}
+<h1>New health check</h1><p class="sub">Fill in the details, attach the evidence, and the report is built on this server.</p>
+{% if error %}<p class="msg err">{{ error }}</p>{% endif %}
+<form method="post" action="/new" enctype="multipart/form-data" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Uploading...'">
+<div class="card"><h2>Client details</h2>{% set f = form %}{% include "_details.html" %}</div>
+<div class="card"><h2>Evidence</h2><div class="grid">
+<div class="drop"><label>Screenshots <span class="hint">Word file (.docx) with the console screenshots</span></label><input type="file" name="screenshots_docx" accept=".docx"></div>
+<div class="drop"><label>Logs <span class="hint">zip with the .cmpolicy and CSV exports</span></label><input type="file" name="logs_zip" accept=".zip"></div>
+<div class="drop"><label>Extra exports <span class="hint">optional loose .csv / .cmpolicy files</span></label><input type="file" name="extra" accept=".csv,.cmpolicy" multiple></div>
+</div><p class="muted" style="margin:12px 0 0">{% if has_zip_password %}The logs zip is opened with the zip password saved in <a href="/settings">Settings</a>.{% else %}No zip password is saved - set one in <a href="/settings">Settings</a> if your log zips are protected.{% endif %}</p></div>
+<button class="btn">Upload and build report</button></form>{% endblock %}
