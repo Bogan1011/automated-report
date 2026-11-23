@@ -75,22 +75,32 @@ def replace_everywhere(roots: Iterable, mapping: dict[str, str]) -> dict[str, in
     return hits
 
 
-def set_cell_text(tc, text: str, bold: Optional[bool] = None) -> None:
+def set_cell_text(tc, text: str, bold: Optional[bool] = None, keep_paragraphs: bool = False) -> None:
     """Replace a table cell's content with ``text``, keeping the first run's look.
 
     ``**bold**`` segments are rendered bold. Newlines become separate
-    paragraphs cloned from the cell's first paragraph.
+    paragraphs: line N takes the look of the cell's paragraph N (so a
+    heading line followed by bullet points keeps its bullets), extra lines
+    copy the last paragraph.
+
+    ``keep_paragraphs`` (template building): keep every paragraph's
+    formatting but empty them, with ``text`` in the first one.
     """
     paras = tc.findall(qn("w:p"))
     if not paras:
         return
-    proto = paras[0]
+    if keep_paragraphs:
+        _fill_paragraph(paras[0], text, bold)
+        for extra in paras[1:]:
+            _fill_paragraph(extra, "", bold)
+        return
+    protos = [copy.deepcopy(p) for p in paras]
     for extra in paras[1:]:
         tc.remove(extra)
     lines = text.split("\n") if text else [""]
-    targets = [proto]
-    for _ in lines[1:]:
-        clone = copy.deepcopy(proto)
+    targets = [paras[0]]
+    for i in range(1, len(lines)):
+        clone = copy.deepcopy(protos[min(i, len(protos) - 1)])
         targets[-1].addnext(clone)
         targets.append(clone)
     for p, line in zip(targets, lines):

@@ -1,0 +1,398 @@
+# ---------------------------------------------------------------------------
+# OCR field specs for the Server & Workload Protection (Vision One SWP /
+# Deep Security) health check. Same format as apexone_sep_ocr.yaml, plus:
+#
+#   kind value_right  the value shown right of a label on the same row
+#                     (dropdowns such as "Inherited (Unlimited)" -> Unlimited)
+#   kind value_list   several "Label: value" rows joined into one cell
+#   pass: plain       read this field from the un-stretched OCR pass
+#   {p} in a key      the policy the page belongs to (win / lin)
+#   {c} in a key      the malware scan configuration (rt / sched / manual)
+#
+# Calibrated on a real engagement (Oct 2026, 98 screenshots).
+# ---------------------------------------------------------------------------
+ocr:
+  stretch: [30, 95]      # dark grey dropdown text on near-black -> readable
+  scale: 3
+  checkbox_style: tick   # ticked = tick drawn inside a light square
+
+scopes:
+  p:
+    win:
+      head: ["Windows_Server", "Windows Server - Google", "Windows > Windows"]
+      section: ["windows"]
+    lin:
+      head: ["Linux Server", "Linux > Linux"]
+      section: ["linux"]
+  c:
+    rt:
+      head: ["Real-Time Scan Configuration Prop", "Scan Type:\\s*Real"]
+      section: ["realtime", "real time"]
+    sched:
+      head: ["Scheduled Scan Configuration Prop"]
+      section: ["schedule scan", "scheduled scan"]
+    manual:
+      head: ["Manual Scan Configuration Prop"]
+      section: ["default manual", "manual scan"]
+
+fields:
+
+  # ---------------- Vision One platform --------------------------------------
+  license:
+    page: ["License Information", "Credit conversion", "Expiration date"]
+    kind: license
+    pass: plain
+    row_re: "Security\\s*[-–]\\s*Pro\\b|Server\\s*&\\s*Workload|Workload Protection"
+
+  swp.mfa:
+    page: ["Multi-Factor Authentication Settings"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "Enable multi.factor authentication.{0,160}?\\bOn\\b", dotall: true, value: true, display: Enabled}
+      - {re: "Enable multi.factor authentication.{0,160}?\\bOff\\b", dotall: true, value: false, display: Disabled}
+      - {re: "Require MFA when users perform", value: true, display: Enabled}
+
+  swp.inactive_cleanup:
+    page: ["Inactive Endpoint Removal Settings"]
+    kind: checkbox
+    label: Automatically remove inactive endpoints
+    min_score: 75
+    when_on: Enabled
+    when_off: Disabled
+
+  swp.agent_upgrade:
+    page: ["Agent version settings"]
+    kind: value_right
+    label: "Update policy:"
+    map:
+      - {re: "\\bn\\b.*(latest|previous)|version\\s*20\\d{4}", display: Enabled, value: true}
+      - {re: "(?i)none|disabled|do not", display: Disabled, value: false}
+
+  swp.console.dsa_versions:
+    page: ["Security Update Version Details"]
+    kind: text
+    pass: plain
+    patterns:
+      - {re: "Server\\s*&\\s*Wor\\w+\\s*Protection\\s*module\\s+(20\\.\\d\\.\\d\\.\\d{4,5})\\s+[-—–]?\\s*(20\\.\\d\\.\\d\\.\\d{4,5})",
+         value: "{1}|{2}", display: "{1} (Windows) / {2} (Linux)"}
+
+  # ---------------- Server & Workload Protection administration ------------
+  swp.agent_activation:
+    page: ["Agent-Initiated Activation"]
+    kind: checkbox
+    label: Allow Agent-Initiated Activation
+    min_score: 75
+
+  swp.alert_email:
+    page: ["Alert Event Forwarding"]
+    kind: value_right
+    label: "Alert Email Address - The email address to which all alert emails should be sent"
+    map:
+      - {re: "@", display: Configured, value: true}
+    empty: {display: Not configured, value: false}
+
+  swp.siem:
+    page: ["Forward System Events to a remote computer"]
+    kind: value_right
+    pass: plain
+    label: "Forward System Events to a remote computer (via Syslog) using configuration:"
+    map:
+      - {re: "\\bnone\\b", display: Not Configured, value: false}
+      - {re: "([A-Za-z0-9].+)", display: "Configured ({1})", value: true}
+
+  swp.smart_feedback:
+    page: ["Smart Feedback"]
+    kind: checkbox
+    label: Smart Feedback (recommended)
+    min_score: 90
+
+  swp.async_tasks:
+    page: ["Asynchronous Tasks"]
+    kind: all_checked
+    labels:
+      - Send Policy To Computers Asynchronously
+      - Export Computers Asynchronously
+      - Generate Single Reports Asynchronously
+      - Export Events Asynchronously
+      - Dismiss Computer Alerts Asynchronously
+
+  swp.task.component_update:
+    page: ["NEXT RUN TIME", "LAST RUN TIME"]
+    kind: text
+    patterns:
+      - {re: "Check for Component Updates", value: true, display: Configured}
+    default: {value: false, display: Not Configured}
+
+  swp.task.malware_scan:
+    page: ["NEXT RUN TIME", "LAST RUN TIME"]
+    kind: text
+    patterns:
+      - {re: "Scan Computers? for Malware", value: true, display: Configured}
+    default: {value: false, display: Not Configured}
+
+  swp.task.recommendation_scan:
+    page: ["NEXT RUN TIME", "LAST RUN TIME"]
+    kind: text
+    patterns:
+      - {re: "Scan Computers? for (Open Ports|Recommendations?)|Recommendation Scan", value: true, display: Configured}
+    default: {value: false, display: Not Configured}
+
+  swp.relay.count:
+    page: ["Relay Management"]
+    kind: text
+    patterns:
+      - {re: "provided by the Primary Tenant", value: 1, display: "1"}
+
+  # ---------------- per policy ({p} = win / lin) ----------------------------
+  "{p}.comm_direction":
+    page: ["Communication Direction"]
+    kind: value_right
+    label: Direction of Workload Security Manager to Agent/Appliance communication
+    min_score: 70
+    map:
+      - {re: "agent.?.?appliance", display: Agent/Appliance initiated}
+      - {re: "manager", display: Manager initiated}
+      - {re: "bi.?directional", display: Bidirectional}
+
+  "{p}.heartbeat":
+    page: ["Heartbeat"]
+    kind: value_right
+    label: Maximum change (in minutes) of the local system time on the computer between heartbeats before an alert is raised
+    map:
+      - {re: "unlimited", display: Unlimited, value: 99999}
+      - {re: "(\\d+)", display: "{1} mins", value: "{1}"}
+
+  "{p}.send_policy":
+    page: ["Send Policy Changes Immediately"]
+    kind: value_right
+    label: Automatically send Policy changes to computers
+    map: &yesno
+      - {re: "\\b(yes|yee|yos|yas)\\b|^y", display: "Yes", value: true}
+      - {re: "\\bno\\b|^n", display: "No", value: false}
+
+  "{p}.kernel_update":
+    page: ["Kernel Package Update"]
+    kind: value_right
+    label: Automatically update kernel package when agent restarts
+    map: *yesno
+
+  "{p}.self_protection":
+    page: ["Agent Self Protection"]
+    kind: value_right
+    label: Prevent local end-users from uninstalling, stopping, or otherwise modifying the Agent
+    min_score: 72
+    next_line: true
+    map:
+      - {re: "\\b(yes|yee|yos|yas)\\b|^y", display: Enabled, value: true}
+      - {re: "\\bno\\b|^n", display: Disabled, value: false}
+
+  "{p}.reco_scan":
+    page: ["Recommendation"]
+    kind: value_right
+    label: "Perform ongoing Recommendation Scans:"
+    next_line: true
+    map:
+      - {re: "\\b(yes|yee|yos|yas)\\b|^y", display: Enabled, value: true}
+      - {re: "\\bno\\b|^n", display: Disabled, value: false}
+
+  "{p}.census":
+    page: ["Census"]
+    kind: value_right
+    label: "Enable Census query:"
+    next_line: true
+    map: *yesno
+
+  "{p}.cpu_control":
+    page: ["CPU Usage Control", "Control the agent CPU usage"]
+    kind: value_right
+    label: Control the agent CPU usage (applicable to realtime Anti-Malware and Activity Monitoring)
+    next_line: true
+    map:
+      - {re: "low", display: Low}
+      - {re: "medium", display: Medium}
+      - {re: "high", display: High}
+      - {re: "unlimited|none", display: Unlimited}
+
+  "{p}.failure_response":
+    page: ["Failure Response", "Network Engine System Failure"]
+    kind: value_right
+    label: Network Engine System Failure
+    map:
+      - {re: "fail\\s*open", display: Enabled - Fail open, value: open}
+      - {re: "fail\\s*closed", display: Fail closed, value: closed}
+
+  "{p}.event_forwarding":
+    page: ["Event Forwarding Configuration"]
+    kind: value_right
+    label: "Anti-Malware Syslog Configuration:"
+    map:
+      - {re: "^none", display: N/A, value: false}
+      - {re: "(.+)", display: "Configured ({1})", value: true}
+
+  "{p}.am.sched_trigger":
+    page: ["Scheduled Scan"]
+    kind: checkbox
+    label: Enable agent to trigger scheduled scans for malware.
+    min_score: 78
+
+  "{p}.am.smart_scan":
+    page_all: ["Smart Scan", "Smart Protection Server for File Reputation"]
+    kind: text
+    patterns:
+      - {re: "Connect directly to Global Smart Protection", value: true, display: Enabled}
+
+  "{p}.wrs.smart_protection":
+    page_all: ["Smart Protection Server for Web Reputation"]
+    kind: text
+    patterns:
+      - {re: "Connect directly to Global Smart Protection", value: true, display: Enabled}
+
+  "{p}.wrs.exceptions":
+    page_all: ["Allowed URL", "Blocked URL"]
+    kind: text
+    patterns:
+      - {re: "(?m)^.*(https?://|www\\.)(?!trendmicro|sitesafety|example)\\S+", value: true, display: Configured}
+    default: {value: false, display: Not Configured}
+
+  "{p}.im.auto_reco":
+    page: ["Integrity Monitoring Rule(s) assigned"]
+    min_score: 82
+    kind: value_right
+    label: Automatically implement Integrity Monitoring Rule Recommendations (when possible)
+    map: *yesno
+
+  "{p}.im.cpu":
+    page: ["Integrity Monitoring CPU Usage Level"]
+    min_score: 88
+    kind: value_right
+    label: "Integrity Monitoring CPU Usage Level:"
+    map:
+      - {re: "high", display: High}
+      - {re: "medium", display: Medium}
+      - {re: "low", display: Low}
+
+  "{p}.li.auto_reco":
+    page: ["Log Inspection Rule(s) assigned"]
+    min_score: 88
+    kind: value_right
+    label: Automatically implement Log Inspection Rule Recommendations (when possible)
+    map: *yesno
+
+  "{p}.ips.auto_reco":
+    page: ["Intrusion Prevention Rule(s) assigned"]
+    min_score: 88
+    kind: value_right
+    label: Automatically implement Intrusion Prevention Recommendations (when possible)
+    map: *yesno
+
+  "{p}.ips.tls_inbound":
+    page: ["Advanced TLS Traffic Inspection"]
+    kind: value_right
+    label: "Inspect Inbound TLS/SSL traffic:"
+    map: *yesno
+
+  "{p}.ips.tls_outbound":
+    page: ["Advanced TLS Traffic Inspection"]
+    kind: value_right
+    label: "Inspect Outbound TLS/SSL traffic:"
+    map: *yesno
+
+  # ---------------- malware scan configurations ({c} = rt / sched / manual) --
+  "swp.{c}.dim":
+    page: ["Dynamic Intelligence Mode"]
+    kind: checkbox
+    label: Enable Dynamic Intelligence Mode
+
+  "swp.{c}.pml":
+    page: ["Predictive Machine Learning"]
+    kind: checkbox
+    label: Enable Predictive Machine Learning
+
+  "swp.{c}.pml_action":
+    vocab: [Quarantine, Pass, Clean, Delete, Terminate, Deny Access, ActiveAction]
+    page: ["Predictive Machine Learning"]
+    kind: value_right
+    label: "Action to take:"
+    below: Enable Predictive Machine Learning
+    above: Enable Behavior Monitoring
+
+  "swp.{c}.bm":
+    page: ["Behavior Monitoring"]
+    kind: checkbox
+    label: Enable Behavior Monitoring
+
+  "swp.{c}.bm_action":
+    vocab: [Quarantine, Pass, Clean, Delete, Terminate, Deny Access, ActiveAction]
+    page: ["Behavior Monitoring"]
+    kind: value_right
+    label: "Action to take:"
+    below: Enable Behavior Monitoring
+    above: Enable AMSI protection
+
+  "swp.{c}.amsi":
+    page: ["Antimalware Scan Interface"]
+    kind: checkbox
+    label: Enable AMSI protection
+    min_score: 70
+
+  "swp.{c}.spyware":
+    page: ["Spyware/Grayware"]
+    kind: checkbox
+    label: Enable spyware/grayware protection
+    min_score: 75
+
+  "swp.{c}.intellitrap":
+    page: ["IntelliTrap"]
+    kind: checkbox
+    label: Enable IntelliTrap
+
+  "swp.{c}.pms":
+    page: ["Process Memory Scan"]
+    kind: checkbox
+    label: Scan process memory for malware
+
+  "swp.{c}.compressed":
+    page: ["Scan Compressed Files"]
+    kind: checkbox
+    label: Scan compressed files
+    below: Scan Compressed Files
+    min_score: 60
+
+  "swp.{c}.ole":
+    page: ["Scan Embedded Microsoft Office Objects"]
+    kind: checkbox
+    label: Scan Embedded Microsoft Office Objects
+    below: Scan Embedded Microsoft Office Objects
+
+  "swp.{c}.excl_dir":
+    page: ["Scan Exclusions"]
+    kind: checkbox
+    label: "Directory List:"
+
+  "swp.{c}.excl_file":
+    page: ["Scan Exclusions"]
+    kind: checkbox
+    label: "File List:"
+    min_score: 75
+
+  "swp.{c}.excl_ext":
+    page: ["Scan Exclusions"]
+    kind: checkbox
+    label: "File Extension List:"
+
+  "swp.{c}.actions":
+    page: ["Recognized Malware"]
+    kind: value_list
+    prefix: Use Custom Action
+    below: Recognized Malware
+    vocab: [Clean, Delete, Quarantine, Pass, Deny Access, ActiveAction, Terminate]
+    items:
+      - {label: "Virus:", name: Virus}
+      - {label: "Trojans:", name: Trojans}
+      - {label: "Packer:", name: Packer}
+      - {label: "Spyware:", name: Spyware}
+      - {label: "CVE Exploit:", name: CVE Exploit, optional: true}
+      - {label: "Aggressive Detection Rule:", name: Aggressive Detection Rule, optional: true}
+      - {label: "Cookie:", name: Cookie, optional: true}
+      - {label: "Other Threats:", name: Other Threats, optional: true}

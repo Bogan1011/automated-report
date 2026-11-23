@@ -103,6 +103,9 @@ class Gap:
     severity: Status = Status.CONCERN
     key: Optional[str] = None
     scope: str = "server"  # "server" or "policy"
+    group: str = ""        # policy the gap applies to ("both", "win", "lin"); "" = ungrouped
+    rank: int = 50         # order in the gap table (rule `gap_rank`)
+    heading: bool = False  # a sub-heading row ("In Windows_Server only"), not a gap
 
 
 @dataclass

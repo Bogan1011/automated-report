@@ -27,7 +27,7 @@ from .engine.evaluate import evaluate, load_rules, status_counts
 from .models import Fact, HealthCheck, Source
 from .render.docx_report import DEFAULT_TEMPLATE, render
 from .render.review import write_review
-from .sources import agentlist, ocr, policy, screenshots, v1logs
+from .sources import agentlist, ocr, policy, screenshots, swp_exports, v1logs
 
 STARTER_PROFILE = """\
 # Client profile for one health check. Paths are relative to this file.
@@ -134,14 +134,63 @@ def _new_healthcheck(prof: dict) -> tuple[HealthCheck, dt.date]:
     return hc, report
 
 
+PACK_TEMPLATES = {
+    "SEP": DEFAULT_TEMPLATE,
+    "SWP": DEFAULT_TEMPLATE.parent / "swp_report_template.docx",
+}
+
+
+def pack_short(rules: dict) -> str:
+    return str((rules.get("meta") or {}).get("short", "SEP")).upper()
+
+
+def _load_swp_exports(hc: HealthCheck, logs_dir: Path, prof: dict, say=print) -> None:
+    """Computers export, policy XML exports and common-object lists (Server & Workload Protection)."""
+    lw, ll = str(prof.get("latest_dsa_windows") or "").strip(), str(prof.get("latest_dsa_linux") or "").strip()
+    comp = swp_exports.find_export(logs_dir, r"^Computers.*\.csv$")
+    if comp:
+        facts, metrics, c = swp_exports.computers_facts(comp, lw, ll, hc.check_date)
+        hc.add_facts(facts)
+        hc.metrics.update(metrics)
+        if not (lw and ll):
+            hc.warnings.append("Latest Server & Workload Protection agent builds are not set - using the newest "
+                               f"seen ({metrics['newest_seen_windows']} / {metrics['newest_seen_linux']}). "
+                               "Set them on the website (Settings).")
+        say(f"computers: {metrics['deployed_agents']} agents (critical {metrics['critical']}, "
+            f"warning {metrics['warning']}, managed {metrics['managed']})")
+    else:
+        hc.warnings.append("No Computers.csv export in the logs - agent counts need the checklist")
+    for xml in sorted(logs_dir.rglob("*.xml")):
+        try:
+            facts, info = swp_exports.policy_facts(xml)
+        except Exception as exc:                      # not a policy export
+            hc.warnings.append(f"{xml.name}: not read ({exc})")
+            continue
+        hc.add_facts(facts)
+        if "ignored_policy" in info:
+            hc.warnings.append(f"{xml.name}: policy {info['ignored_policy']!r} is not one of the reviewed policies")
+        else:
+            say(f"policy export: {xml.name} ({len(facts)} settings)")
+    hc.add_facts(swp_exports.exclusion_list_facts(logs_dir))
+    risky = swp_exports.risky_extension_exclusions(logs_dir)
+    hc.metrics["risky_extensions"] = risky
+    hc.metrics["logs_dir_files"] = sorted(p.name for p in logs_dir.rglob("*") if p.is_file())
+
+
 def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print,
-                  prof_latest: str = "") -> None:
+                  prof_latest: str = "", prof: dict | None = None, short: str = "SEP",
+                  keep_dir: Path | None = None) -> None:
     """Policy export, agent list and log exports - all local file parsing."""
     if not ev.get("logs"):
         say("no logs/exports configured - every setting will need a screenshot or checklist entry")
         return
     logs_dir, cleanup = _unpack_logs(base / ev["logs"], str(ev.get("zip_password") or ""))
     try:
+        if keep_dir is not None:             # the presentation needs the event exports afterwards
+            shutil.copytree(logs_dir, keep_dir, dirs_exist_ok=True)
+        if short == "SWP":
+            _load_swp_exports(hc, logs_dir, prof or {}, say)
+            return
         pols = sorted(logs_dir.rglob("*.cmpolicy"))
         for i, pf in enumerate(pols):
             facts, pol = policy.extract(pf)
@@ -175,13 +224,26 @@ def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print,
             shutil.rmtree(cleanup, ignore_errors=True)
 
 
+def _check_console_versions(hc: HealthCheck) -> None:
+    """Warn when the console shows newer agent builds than the ones set in Settings."""
+    seen = hc.get("swp.console.dsa_versions")
+    if not seen or "|" not in str(seen.value):
+        return
+    win, lin = str(seen.value).split("|", 1)
+    for label, console, configured in (("Windows", win, hc.metrics.get("latest_dsa_windows", "")),
+                                       ("Linux", lin, hc.metrics.get("latest_dsa_linux", ""))):
+        if configured and swp_exports.version_key(console) > swp_exports.version_key(configured):
+            hc.warnings.append(f"The console offers {label} agent {console}, newer than the latest build set "
+                               f"({configured}) - update it in Settings.")
+
+
 def make_checklist(profile_path: Path, force: bool = False, sync: bool = False, quiet: bool = False) -> Path:
     """Create the checklist, or with sync=True bring an existing one up to date."""
     prof, base, opts, ev = _load_profile(profile_path)
     rules = load_rules(opts.get("rules", "apexone_sep"))
     hc, _ = _new_healthcheck(prof)
     _load_exports(hc, base, ev, opts, say=(lambda *_: None) if quiet else print,
-                  prof_latest=str(prof.get("latest_agent_build") or ""))
+                  prof_latest=str(prof.get("latest_agent_build") or ""), prof=prof, short=pack_short(rules))
     out = base / ev.get("checklist", "checklist.xlsx")
     covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
     # Pre-fill anything a screenshot reading already found, for confirmation.
@@ -203,13 +265,18 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
           dry_run: bool = False, template: Path | None = None) -> HealthCheck:
     prof, base, opts, ev = _load_profile(profile_path)
     rules = load_rules(opts.get("rules", "apexone_sep"))
+    short = pack_short(rules)
     hc, report = _new_healthcheck(prof)
     say = print
+    out_dir = out_dir or (base / "output")
+    logs_copy = base / ".logs_cache"
+    if logs_copy.exists():
+        shutil.rmtree(logs_copy, ignore_errors=True)
 
-    _load_exports(hc, base, ev, opts, say, prof_latest=str(prof.get("latest_agent_build") or ""))
+    _load_exports(hc, base, ev, opts, say, prof_latest=str(prof.get("latest_agent_build") or ""),
+                  prof=prof, short=short, keep_dir=logs_copy if not dry_run else None)
 
     # ---- screenshots -------------------------------------------------------
-    out_dir = out_dir or (base / "output")
     cache_path = base / "screenshot_cache.json"
     reader_kind = str(opts.get("reader", "ocr")).lower()
     min_conf = float(opts.get("min_confidence", 0.6))
@@ -249,12 +316,28 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
                          source=Source.MANUAL, evidence=spec.get("note", "entered in client profile")))
 
     # ---- evaluate + render --------------------------------------------------
+    if short == "SWP":
+        from .engine import derive_swp
+        derive_swp.derive(hc)
+        _check_console_versions(hc)
     evaluate(hc, rules)
     first = hc.client_name.split()[0] if hc.client_name else "Client"
-    stem = f"{first}_SEP_Health_Check_Report_{report.strftime('%b_%Y')}"
-    docx_out = render(hc, out_dir / f"{stem}.docx", template or DEFAULT_TEMPLATE,
-                      product=prof.get("product", "Standard Endpoint Protection"))
+    stem = f"{first}_{short}_Health_Check_Report_{report.strftime('%b_%Y')}"
+    product = prof.get("product") or (rules.get("meta") or {}).get("product", "Standard Endpoint Protection")
+    docx_out = render(hc, out_dir / f"{stem}.docx", template or PACK_TEMPLATES.get(short, DEFAULT_TEMPLATE),
+                      product=product, short=short)
     review_out = write_review(hc, out_dir / f"{stem}_review.xlsx")
+    if not opts.get("no_presentation"):
+        try:
+            from .render.pptx_report import render_presentation
+            ppt_out = render_presentation(hc, out_dir / f"{stem.replace('Health_Check_Report', 'Product_Efficacy_Report')}.pptx",
+                                          short=short, logs_dir=logs_copy if logs_copy.exists() else None,
+                                          product=product)
+            say(f"presentation: {ppt_out}")
+        except Exception as exc:                       # the Word report must not fail because of the deck
+            hc.warnings.append(f"presentation not built: {exc}")
+            say(f"presentation not built: {exc}")
+    shutil.rmtree(logs_copy, ignore_errors=True)
     counts = status_counts(hc)
     say(f"\nrows: {counts}")
     if counts.get("unknown"):

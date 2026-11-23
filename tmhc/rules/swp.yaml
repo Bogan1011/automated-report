@@ -1,0 +1,159 @@
+# ---------------------------------------------------------------------------
+# Rule pack: Trend Micro Server & Workload Protection (Vision One SWP) health
+# check. Same format as apexone_sep.yaml (see the notes at the top of that
+# file), plus:
+#
+#   policy.scopes   the policies reviewed, one block of rows each. Keys
+#                   with {p} are read per policy (win.heartbeat, lin.heartbeat);
+#                   {name} in gap text is the policy name.
+#   only: [win]     evaluate the gap for these policies only
+#   gap_rank        order of the server gap table (lower first)
+#
+# Gaps that fire for every reviewed policy are listed once under
+# "In Both ... Policy"; the rest under "In <policy> only".
+# ---------------------------------------------------------------------------
+
+meta:
+  product: Server & Workload Protection
+  short: SWP
+
+server:
+  title: Server & Workload Protection Health Check Overview
+  groups:
+    - heading: Configuration Health Overview
+      rows:
+        - {component: License, recommended: Within term (Compliant), key: license.expiry, display_key: swp.license_valid,
+           check: date_future, fail: critical,
+           gap: "The license has expired or expiry could not be confirmed ({deployed}). Renew the license to keep receiving updates."}
+        - {component: DSM Relay Nodes, recommended: "3", key: swp.relay.count, check: {gte: 3}, fail: info}
+        - {component: DSA Version, recommended: "The latest are: {m.latest_dsa_windows}(Windows) {m.latest_dsa_linux} (Linux)",
+           key: swp.inventory.agent_versions, check: zero, gap_rank: 1,
+           gap: "{m.outdated_subject} running on an older version, recommended to upgrade to the latest version. The latest version is {m.latest_dsa_windows} for windows and {m.latest_dsa_linux}  for Linux  platforms."}
+        - {component: Deployed Agents, recommended: "Purchased License: {m.license_seats} seats", key: swp.inventory.deployed,
+           check: seats_cover}
+        - {component: Agent status, recommended: All managed, key: swp.inventory.status_health, check: zero, show: false, gap_rank: 2,
+           gap: "{m.managed} computers are in the managed state, {m.warning} computers are in the warning state, and {m.critical} computers are in a critical state."}
+        - {component: Scheduled Task, recommended: Components updates, key: swp.task.component_update, check: enabled, gap_rank: 4,
+           gap: "In Schedule task, Check for Component Updates is not configured. It is recommended to configure it so all computers receive the latest components."}
+        - {component: Scheduled Task, recommended: Malware scanning, key: swp.task.malware_scan, check: enabled, gap_rank: 5,
+           gap: "In Schedule task scan computer for malware is not configured. It is recommended to configure scheduled scans for all computers to continuous protection and proactive threat detection."}
+        - {component: Scheduled Task, recommended: Recommendation Scan, key: swp.task.recommendation_scan, check: enabled, gap_rank: 6,
+           gap: "In schedule tasks, Scan computers for recommendation is not configured, recommended to configure it for all the computers."}
+        - {component: Syslog /SIEM Server, recommended: Configured, key: swp.siem, check: enabled, fail: info, gap_rank: 8,
+           gap: "SIEM is not configured, recommended to configure it to send events to an external Syslog."}
+        - {component: Patterns & Components Update Status, recommended: Up to date, key: swp.inventory.component_status,
+           check: zero, gap_rank: 3,
+           gap: "{m.out_of_date} computers are outdated and {m.update_unknown} computers are unknown in Component Update Status, recommended to check the communication and perform a component update again. Apply component updates | TrendAI™ "}
+        - {component: Multi factor Authentication, recommended: Enable, key: swp.mfa, check: enabled,
+           gap: "Multi-factor authentication is disabled, recommended to enable it for all accounts."}
+        - {component: Smart Feed back, recommended: Enable, key: swp.smart_feedback, check: enabled}
+        - {component: Computers without policy, recommended: "0", key: swp.inventory.without_policy, check: zero, show: false,
+           gap_rank: 9,
+           gap: "{m.without_policy} computers are currently without policy. It is recommended to apply policy to these computers on priority for better protection."}
+    - heading: Settings
+      rows:
+        - {component: Agent Initiated Activation, recommended: Enable, key: swp.agent_activation, check: enabled}
+        - {component: Inactive agent cleanup, recommended: Enable, key: swp.inactive_cleanup, check: enabled}
+        - {component: Alert Configuration, recommended: Enabled, key: swp.alert_email, check: enabled, fail: info, gap_rank: 7,
+           gap: "In Alert Settings, Alert Event Forwarding is not configured; it is recommended to configure it to ensure timely notifications for important security events."}
+        - {component: Agent Upgrade, recommended: Enabled (Auto upgrade during activation), key: swp.agent_upgrade, check: enabled, pass: info}
+        - {component: Asynchronous Tasks, recommended: Enabled, key: swp.async_tasks, check: enabled, fail: info}
+
+policy:
+  title: Policy
+  scopes:
+    - {id: win, name: "{m.win_policy_name}", default_name: Windows_Server}
+    - {id: lin, name: "{m.lin_policy_name}", default_name: Linux Server}
+  both_heading: "In Both {names} Policy"
+  only_heading: "In {name} only"
+  groups:
+    - heading: "Policy Effectiveness – {name}"
+      rows:
+        - {component: Anti-Malware, recommended: Licensed | Enabled, key: "{p}.mod.am", check: enabled, fail: critical,
+           gap: "Anti-Malware module is disabled, recommended to enable it."}
+        - {component: Web Reputation, recommended: Licensed | Enabled, key: "{p}.mod.wrs", check: enabled,
+           gap: "Web Reputation module is disabled, recommended to enable it to block access to malicious URLs."}
+        - {component: Device Control, recommended: Licensed | Enabled, key: "{p}.mod.dc", check: enabled, fail: info, gap_only: [win],
+           gap: "Device Control module is disabled, recommended to enable it for windows platform. The Device Control module regulates access to external storage devices that are connected to computers. Device Control helps prevent data leaks and combined with file scanning, helps guard against security risks."}
+        - {component: Application Control (optional), recommended: Licensed | Enabled, key: "{p}.mod.ac", check: enabled, fail: info,
+           gap: "Application Control module is disabled, recommended to enable it. Application control continuously monitors for software changes on your protected servers. Based on your policy configuration, application control either prevents unauthorized software from running until it is explicitly allowed or allows unauthorized software until it is explicitly blocked."}
+        - {component: Firewall (optional), recommended: Licensed | Enabled, key: "{p}.mod.fw", check: enabled, fail: info,
+           gap: "Firewall module is disabled (Optional), Recommended to enable it. The Firewall module is for controlling incoming and outgoing traffic and it also maintains firewall event logs for audits."}
+        - {component: Intrusion Prevention, recommended: Licensed | Enabled, key: "{p}.mod.ips", check: enabled,
+           gap: "Intrusion Prevention module is disabled, recommended to enable it to shield vulnerabilities until patches are applied."}
+        - {component: Integrity Monitoring, recommended: Licensed | Enabled, key: "{p}.mod.im", check: enabled,
+           gap: "Integrity Monitoring module is disabled, recommended to enable it to detect unexpected changes to files, registry and services."}
+        - {component: Log Inspection, recommended: Licensed | Enabled, key: "{p}.mod.li", check: enabled,
+           gap: "Log Inspection module is disabled, recommended to enable it to identify important security events in operating system and application logs."}
+    - heading: Settings
+      rows:
+        - {component: Communication Direction, recommended: Agent/Appliance initiated, key: "{p}.comm_direction", check: {contains: agent}}
+        - {component: Heartbeat, recommended: 10 mins, key: "{p}.heartbeat", check: {lte: 10},
+           gap: "The Settings Heartbeat is currently configured as {deployed_lower}. It is recommended to set it to 10 minutes to reduce potential network disruptions."}
+        - {component: Send Policy Changes Immediately, recommended: "Yes", key: "{p}.send_policy", check: enabled}
+        - {component: Auto Kernel package upgrade (Linux only), recommended: "Yes", key: "{p}.kernel_update", check: enabled, pass: info}
+        - {component: Agent Self Protection, recommended: Enable, key: "{p}.self_protection", check: enabled, fail: critical,
+           gap: "In General Setting, Agent Self Protection Configuration is disabled, recommended to enable it to prevent unauthorized uninstallation or modifications."}
+        - {component: Network Setting for Census, Good File Reputation, and Predictive Machine Learning Service, recommended: "Yes",
+           key: "{p}.census", check: enabled}
+        - {component: Perform ongoing recommendation Scan, recommended: Configure Disable if schedule task is enabled,
+           key: "{p}.reco_scan", check: info}
+        - {component: CPU Usage Control (Linux), recommended: Enabled, key: "{p}.cpu_control", check: {in: [Low, Medium]}, pass: info, fail: info}
+        - {component: Failure Response, recommended: Enabled - Fail Open, key: "{p}.failure_response", check: {contains: open}}
+        - {component: Event Forwarding & on Each Policies, recommended: Custom syslog server/SIEM collector,
+           key: "{p}.event_forwarding", check: enabled, fail: info}
+    - heading: Real-Time Scan Configuration
+      rows:
+        - {component: Dynamic Intelligent mode, recommended: Enable, key: swp.rt.dim, check: enabled,
+           gap: "In Realtime scan, Dynamic Intelligence Mode is disabled, recommended to enable it so the agent automatically adjusts monitoring levels based on detected threats."}
+        - {component: Predictive Machine Learning, recommended: Enable, key: swp.rt.pml, display_key: swp.rt.pml_display, check: enabled,
+           gap: "In Realtime scan, Predictive Machine Learning is disabled, recommended to enable it."}
+        - {component: Behavior Monitoring, recommended: Enable, key: swp.rt.bm_action, display_key: swp.rt.bm_display,
+           check: {not_in: [Pass]},
+           gap: "In Realtime scan, Behavior Monitoring is Enabled with Pass Action, recommended to set the ActiveAction for better protection from ransomware."}
+        - {component: Windows AMSI, recommended: Enable, key: swp.rt.amsi, check: enabled}
+        - {component: Spyware/Grayware Scan, recommended: Enable, key: swp.rt.spyware, check: enabled}
+        - {component: IntelliTrap, recommended: Enable, key: swp.rt.intellitrap, check: enabled}
+        - {component: Process Memory Scan, recommended: Enable, key: swp.rt.pms, check: enabled}
+        - {component: Scan Exclusions, recommended: As per Application requirements, key: swp.rt.exclusions, check: info}
+        - {component: Scan Compressed Files, recommended: Enable, key: swp.rt.compressed, check: enabled}
+        - {component: Scan Embedded Microsoft Office Objects, recommended: Enable, key: swp.rt.ole, check: enabled}
+        - {component: Remediation Actions, recommended: Custom, key: swp.rt.actions, check: {contains: Custom}, fail: info}
+        - {component: Smart Protection, recommended: Enable, key: "{p}.am.smart_scan", check: enabled}
+    - heading: Scheduled Scan Configuration
+      rows:
+        - {component: Enable agent to trigger scheduled scans for malware, recommended: Enable, key: "{p}.am.sched_trigger", check: enabled, fail: info,
+           gap: "Enable agent to trigger scheduled scans for malware is not enabled. Recommended to enable it to ensures scheduled scans run even if the agent cannot connect to Server & Workload Protection, maintaining consistent malware protection."}
+        - {component: Schedule Scan, recommended: Enable Weekly Once Sunday 00:00 AM, key: swp.task.malware_scan, check: enabled}
+        - {component: Spyware/Grayware Scan, recommended: Enable, key: swp.sched.spyware, check: enabled}
+        - {component: Scan Exclusions, recommended: As per Application requirements, key: swp.sched.exclusions, check: info}
+        - {component: Scan Compressed Files, recommended: Enable, key: swp.sched.compressed, check: enabled}
+        - {component: Scan Embedded Microsoft Office Objects, recommended: Enable, key: swp.sched.ole, check: enabled}
+        - {component: Remediation Actions, recommended: Custom or recommended, key: swp.sched.actions, check: {contains: Custom}, fail: info}
+    - heading: Other modules
+      rows:
+        - {component: Web Reputation, recommended: Status – On, key: "{p}.state.wrs", check: enabled}
+        - {component: Exceptions, recommended: Approved & Blocked If any, key: "{p}.wrs.exceptions", check: info}
+        - {component: Smart Protection, recommended: Enable, key: "{p}.wrs.smart_protection", check: enabled}
+        - {component: Device Control, recommended: Status – On, key: "{p}.state.dc", check: enabled, fail: info}
+        - {component: USB Mass Storage / USB Auto-Run Function / Mobile (MTP/PTP), recommended: Status, key: "{p}.dc.protocols", check: info}
+        - {component: Exceptions, recommended: Status – On, key: "{p}.dc.exceptions", check: info}
+        - {component: Application Control (optional), recommended: Status – On, key: "{p}.state.ac", check: enabled, fail: info}
+        - {component: Enforcement, recommended: Block, key: "{p}.ac.enforcement", check: info}
+        - {component: Trust Entities, recommended: Allow or block to be specified, key: "{p}.ac.trust", check: info}
+        - {component: Integrity Monitoring, recommended: Status – On, key: "{p}.state.im", check: enabled}
+        - {component: Automatically implement Integrity Monitoring Rule Recommendations, recommended: "No", key: "{p}.im.auto_reco",
+           check: disabled, fail: info}
+        - {component: Advanced – CPU usage, recommended: Low, key: "{p}.im.cpu", check: {equals: Low}, fail: info}
+        - {component: Custom IM Rules, recommended: Configure as per requirement, key: "{p}.im.rules", check: info}
+        - {component: Log Inspection, recommended: Status – On, key: "{p}.state.li", check: enabled}
+        - {component: Automatically implement Log Inspection Rule Recommendations, recommended: "Yes", key: "{p}.li.auto_reco", check: enabled}
+        - {component: Custom LI Rules, recommended: Configure as per requirement, key: "{p}.li.rules", check: info}
+        - {component: Firewall (optional), recommended: Enabled, key: "{p}.state.fw", check: enabled, fail: info}
+        - {component: Custom FW Rules, recommended: Configure as per requirement, key: "{p}.fw.custom", check: info}
+        - {component: Intrusion Prevention, recommended: Status – On, key: "{p}.state.ips", check: enabled}
+        - {component: Intrusion Prevention Behavior, recommended: Prevent, key: "{p}.ips.behavior", check: {equals: Prevent},
+           gap: "Intrusion Prevention behavior is set to Detect, recommended to set it to Prevent so that malicious traffic is blocked."}
+        - {component: Automatically implement Intrusion Prevention Rule Recommendations, recommended: "Yes", key: "{p}.ips.auto_reco", check: enabled}
+        - {component: "Advanced TLS Traffic Inspection: Inspect Inbound/ Inspect Outbound", recommended: "No", key: "{p}.ips.tls",
+           check: disabled, fail: info}

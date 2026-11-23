@@ -99,6 +99,9 @@ def run_check(check: Any, fact: Fact, hc: HealthCheck) -> Optional[bool]:
     if kind == "in":
         opts = {_norm(a) for a in arg}
         return _norm(v) in opts or _norm(d) in opts
+    if kind == "not_in":
+        opts = {_norm(a) for a in arg}
+        return not (_norm(v) in opts or _norm(d) in opts)
     if kind == "contains":
         opts = arg if isinstance(arg, list) else [arg]
         return any(_norm(a) in _norm(d) or _norm(a) in _norm(v) for a in opts)
@@ -203,11 +206,15 @@ class _Builder:
                 self.shared_gaps[gid] = Gap(text="", key=gid, scope=scope)
                 (hc.gaps_server if scope == "server" else hc.gaps_policy).append(self.shared_gaps[gid])
             self.shared[gid].append((extra or {}).get("name", ""))
-        elif fire and gap_text:
+        elif fire and gap_text and (not rule.get("gap_only") or (extra or {}).get("scope") in rule["gap_only"]):
             text = _fmt(gap_text, hc, deployed=deployed, extra=extra)
             gap = Gap(text=text, severity=status if status != Status.INFO else Status.INFO,
-                      key=key, scope=scope)
-            (hc.gaps_server if scope == "server" else hc.gaps_policy).append(gap)
+                      key=key, scope=scope, rank=int(rule.get("gap_rank", 50)),
+                      group=(extra or {}).get("scope", ""))
+            if (extra or {}).get("collect") is not None:
+                extra["collect"].append((rule.get("_rid"), gap))
+            else:
+                (hc.gaps_server if scope == "server" else hc.gaps_policy).append(gap)
 
         if rule.get("show", True) is False:
             return None
@@ -246,6 +253,10 @@ def evaluate(hc: HealthCheck, rules: dict) -> HealthCheck:
 
     # Policy table
     pol = rules.get("policy", {})
+    if pol.get("scopes"):
+        _evaluate_scoped(hc, b, pol)
+        _order_gaps(hc)
+        return hc
     run_groups(pol.get("groups", []), pol.get("title", "Policy"), "policy", hc.rows_policy)
 
     template = pol.get("scan_template", [])
@@ -282,17 +293,75 @@ def evaluate(hc: HealthCheck, rules: dict) -> HealthCheck:
     return hc
 
 
+def _evaluate_scoped(hc: HealthCheck, b: "_Builder", pol: dict) -> None:
+    """One block of policy rows per reviewed policy (Windows / Linux server ...).
+
+    Row keys with {p} become per-policy keys (win.heartbeat). A gap raised
+    for every policy is listed once under "In Both ... Policy"; the others
+    under "In <policy> only", in rule order.
+    """
+    scopes = []
+    for sc in pol["scopes"]:
+        name = _fmt(sc.get("name", ""), hc)
+        if not name or name == "N/A":
+            name = hc.facts.get(f"{sc['id']}.name").display if hc.facts.get(f"{sc['id']}.name") else sc.get(
+                "default_name", sc["id"])
+        scopes.append((sc["id"], name))
+    hc.metrics["policy_names"] = [n for _, n in scopes]
+    collected: dict[str, list] = {sid: [] for sid, _ in scopes}
+    rid = 0
+    for sid, name in scopes:
+        rid = 0
+        for g in pol.get("groups", []):
+            heading = _fmt(g["heading"].replace("{name}", name), hc)
+            hc.rows_policy.append(ReportRow(section=name, component=heading, recommended="", deployed="",
+                                            status=Status.INFO, group="__heading__"))
+            for rule in g.get("rows", []):
+                rid += 1
+                r = dict(rule, _rid=rid)
+                for k in ("key", "display_key"):
+                    if r.get(k):
+                        r[k] = r[k].replace("{p}", sid)
+                row = b.evaluate(r, heading, "policy", extra={"name": name, "scope": sid,
+                                                               "collect": collected[sid]})
+                if row:
+                    hc.rows_policy.append(row)
+    # merge: same rule failing in every policy -> one "both" gap
+    by_rule: dict[int, dict[str, Gap]] = {}
+    for sid, items in collected.items():
+        for r_id, gap in items:
+            by_rule.setdefault(r_id, {})[sid] = gap
+    ids = [sid for sid, _ in scopes]
+    names = dict(scopes)
+    both = [g[ids[0]] for r_id, g in sorted(by_rule.items()) if len(ids) > 1 and all(s in g for s in ids)]
+    out: list[Gap] = []
+    if both:
+        joined = " & ".join(names[s] for s in ids)
+        out.append(Gap(text=pol.get("both_heading", "In Both {names} Policy").replace("{names}", joined),
+                       scope="policy", group="both", heading=True))
+        for g in both:
+            g.group = "both"
+            out.append(g)
+    for sid in ids:
+        only = [g[sid] for r_id, g in sorted(by_rule.items()) if sid in g and not all(s in g for s in ids)]
+        if only:
+            out.append(Gap(text=pol.get("only_heading", "In {name} only").replace("{name}", names[sid]),
+                           scope="policy", group=sid, heading=True))
+            out.extend(only)
+    hc.gaps_policy.extend(out)
+
+
 def _order_gaps(hc: HealthCheck) -> None:
     """Keep inventory gaps first, then the rest, as in the existing reports."""
-    def rank(g: Gap) -> int:
+    def rank(g: Gap) -> tuple:
         k = g.key or ""
         if k.startswith("inventory."):
-            return 0
+            return (0, g.rank)
         if k == "_always":
-            return 1
+            return (1, g.rank)
         if k.startswith("global."):
-            return 2
-        return 3
+            return (2, g.rank)
+        return (3, g.rank)
     hc.gaps_server.sort(key=rank)
 
 

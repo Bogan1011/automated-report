@@ -57,7 +57,7 @@ def _tag_rows(table, rows: dict, label: str) -> None:
         if len(cells) < 3:
             raise SystemExit(f"{label}: row {ri} is a heading row, not a data row")
         status, deployed, rec = cells[-1], cells[-2], cells[-3]
-        set_cell_text(deployed, "{{=" + spec["key"] + "}}")
+        set_cell_text(deployed, "{{=" + spec["key"] + "}}", keep_paragraphs=True)
         if spec.get("recommended"):
             set_cell_text(rec, spec["recommended"])
         # a Status cell merged down over several rows belongs to the first of them
@@ -85,7 +85,7 @@ def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | No
         if h.startswith("Location"):
             for row, token in zip(t.rows, ("location", "customer_attendance", "trend_attendance")):
                 set_cell_text(tcs(row)[-1], "{{" + token + "}}")
-        elif h.startswith("Product | Findings"):
+        elif h.startswith("Product | Findings") or h.startswith("Products | Findings"):
             trim_rows(t, 2)
             c0, c1 = tcs(t.rows[1])[0], tcs(t.rows[1])[-1]
             set_cell_text(c0, "{{EXEC_PRODUCT}}")
@@ -107,8 +107,16 @@ def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | No
         elif h.startswith("#"):
             token = "{{SERVER_GAPS}}" if gaps_seen == 0 else "{{POLICY_GAPS}}"
             gaps_seen += 1
-            trim_rows(t, 2)
-            set_cell_text(tcs(t.rows[1])[-1], token)
+            trs = t._tbl.findall(qn("w:tr"))
+            if len(trs) > 2 and len(trs[1].findall(qn("w:tc"))) == 1:
+                # sub-heading rows ("In Both ... Policy") followed by gap rows
+                for tr in trs[3:]:
+                    t._tbl.remove(tr)
+                set_cell_text(trs[1].findall(qn("w:tc"))[0], "{{GAP_HEADING}}")
+                set_cell_text(trs[2].findall(qn("w:tc"))[-1], token)
+            else:
+                trim_rows(t, 2)
+                set_cell_text(tcs(t.rows[1])[-1], token)
 
     roots = [doc.element.body]
     for s in doc.sections:
@@ -136,7 +144,9 @@ def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | No
         for name in z.namelist():
             if name.endswith((".xml", ".rels")):
                 xml = z.read(name).decode("utf-8", "ignore")
-                for k in replacements:
+                for k, ph in replacements.items():
+                    if ph.startswith("m."):          # computed sentences, not client identifiers
+                        continue
                     first_word = k.split()[0]
                     if len(first_word) > 3 and first_word in xml:
                         leftovers.append((name, first_word))

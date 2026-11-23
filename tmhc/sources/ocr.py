@@ -73,7 +73,16 @@ class Match:
 
 
 class Page:
-    def __init__(self, data: bytes, name: str = ""):
+    def __init__(self, data: bytes, name: str = "", stretch: Optional[tuple] = None,
+                 scale: int = SCALE, section: str = "", checkbox_style: str = "fill"):
+        """`stretch=(lo, hi)` maps grey levels lo..hi to the full range before OCR.
+
+        The Server & Workload Protection console draws dropdown values and
+        descriptions in dark grey on near-black (text ~75, background ~40);
+        plain OCR does not see them at all. Stretching that band makes them
+        readable; bright text simply saturates. Pixel analysis of checkboxes
+        always uses the original image.
+        """
         _deps()
         import cv2
         import numpy as np
@@ -85,14 +94,24 @@ class Page:
             raise ValueError(f"cannot decode image {name}")
         self.img = img
         self.name = name
+        self.section = section
+        self._data, self._plain = data, None
+        # "fill": ticked boxes are filled/dark-centred (Apex One, Vision One).
+        # "tick": every box is a light square; only a ticked one has a tick
+        #         drawn inside it (Server & Workload Protection dark theme).
+        self.checkbox_style = checkbox_style
+        self.stretched = bool(stretch)
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        g = cv2.resize(g, None, fx=SCALE, fy=SCALE, interpolation=cv2.INTER_CUBIC)
+        g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        if stretch:
+            lo, hi = stretch
+            g = 255 - np.clip((g.astype(np.float32) - lo) * 255.0 / (hi - lo), 0, 255).astype(np.uint8)
         d = pytesseract.image_to_data(g, output_type=pytesseract.Output.DICT, config="--psm 3")
         self.words: list[Word] = []
         for i, t in enumerate(d["text"]):
             if t.strip() and float(d["conf"][i]) >= 20:
-                self.words.append(Word(t, d["left"][i] / SCALE, d["top"][i] / SCALE,
-                                       d["width"][i] / SCALE, d["height"][i] / SCALE,
+                self.words.append(Word(t, d["left"][i] / scale, d["top"][i] / scale,
+                                       d["width"][i] / scale, d["height"][i] / scale,
                                        (d["block_num"][i], d["par_num"][i], d["line_num"][i])))
         lines: dict[tuple, list[Word]] = {}
         for w in self.words:
@@ -100,6 +119,16 @@ class Page:
         self.lines = [sorted(v, key=lambda w: w.x) for v in lines.values()]
         self.text = "\n".join(" ".join(w.t for w in ln) for ln in
                               sorted(self.lines, key=lambda ln: (ln[0].y, ln[0].x)))
+
+    @property
+    def plain(self) -> "Page":
+        """The same screenshot read without contrast stretching (made on first use)."""
+        if not self.stretched:
+            return self
+        if self._plain is None:
+            self._plain = Page(self._data, self.name, section=self.section,
+                               checkbox_style=self.checkbox_style)
+        return self._plain
 
     # -- text search ---------------------------------------------------------
     def find_all(self, label: str, min_score: float = 82) -> list[Match]:
@@ -174,6 +203,14 @@ class Page:
         roi_blue = float(blue[cy2:cy2 + hh, cx:cx + w].mean())
         ix, iy = max(1, int(w * 0.3)), max(1, int(hh * 0.3))
         centre_diff = float(abs(roi[iy:hh - iy, ix:w - ix].mean() - bgv))
+        if getattr(self, "checkbox_style", "fill") == "tick":
+            inner = roi[2:hh - 2, 2:w - 2]
+            spread = float(inner.std()) if inner.size else 0.0
+            light = abs(float(inner.mean()) - bgv) > 8 if inner.size else False
+            on = (spread > 7 and light) or roi_blue > 0.25
+            conf = 0.95 if (spread > 12 or spread < 3) else 0.75
+            return {"on": on, "blue": round(roi_blue, 2), "centre": round(centre_diff, 1), "conf": conf,
+                    "margin": round(abs(spread - 7), 2), "x": x0 + cx, "spread": round(spread, 1)}
         on = roi_blue > 0.25 or centre_diff > 20
         # margin from the decision boundary -> confidence
         margin = max(roi_blue - 0.25, centre_diff - 20) if on else min(0.25 - roi_blue, 20 - centre_diff)
@@ -232,6 +269,21 @@ def _probe(page: Page, m: Match) -> Optional[dict]:
     if c is None and m.line and m.line[0].x >= m.x - 2:
         # the label's first word(s) were not read at all: look a little further left
         c = page.control_left_of(m, search=60)
+    if c is None:
+        # OCR sometimes merges the box into the first word ("[x]Allow" read as "Allow")
+        c = page.control_left_of(Match(m.text, m.x + 18, m.y, m.h, m.right, m.score, m.line), search=26)
+    if c is None and m.line:
+        # the box was read as a glyph ("@", "B", "|") or the label's first words
+        # were dropped: walk left over the preceding words of the row
+        x = m.x
+        for w in sorted((w for w in m.line if w.x < m.x - 1), key=lambda w: -w.x):
+            if x - (w.x + w.w) > 40:
+                break
+            for probe_x in (w.x + w.w + 3, w.x):
+                c = page.control_left_of(Match(m.text, probe_x, m.y, m.h, m.right, m.score, m.line))
+                if c is not None:
+                    return c
+            x = w.x
     return c
 
 
@@ -300,15 +352,27 @@ def _radio(page: Page, spec: dict, key: str) -> Optional[dict]:
 
 
 def _in_band(page: Page, m: Match, spec: dict) -> bool:
-    """Respect optional `below`/`above` anchors so repeated words resolve to one block."""
+    """Respect optional `below`/`above` anchors so repeated words resolve to one block.
+
+    The match must sit under a `below` anchor with no `above` anchor in
+    between (so an anchor word repeated higher up the page, e.g. in a help
+    text, does not close the band early).
+    """
+    below = page.find_all(spec["below"], 85) if spec.get("below") else []
+    above = page.find_all(spec["above"], 85) if spec.get("above") else []
+    if spec.get("heading"):
+        # anchors must be section headings (alone on their row), not words in help text
+        def alone(a: Match) -> bool:
+            return len(" ".join(w.t for w in a.line)) <= len(a.text) + 8
+        below, above = [a for a in below if alone(a)], [a for a in above if alone(a)]
     if spec.get("below"):
-        a = page.find_all(spec["below"], 85)
-        if not a or m.y <= min(x.y for x in a):
+        starts = [b.y for b in below if b.y < m.y - 1]
+        if not starts:
             return False
+        start = max(starts)
+        return not any(start < a.y < m.y for a in above)
     if spec.get("above"):
-        a = [x for x in page.find_all(spec["above"], 85)]
-        if a and m.y >= min(x.y for x in a):
-            return False
+        return any(a.y > m.y for a in above) if above else True
     return True
 
 
@@ -434,11 +498,145 @@ def _radio_ordered(page: Page, spec: dict, key: str) -> Optional[dict]:
 
 
 def _text(page: Page, spec: dict, key: str) -> Optional[dict]:
+    """Regex over the page text. `value`/`display` may use {1}, {2}... (capture groups)."""
     for rule in spec["patterns"]:
-        mt = re.search(rule["re"], page.text, re.I)
+        mt = re.search(rule["re"], page.text, re.I | re.S if rule.get("dotall") else re.I)
         if mt:
-            return _result(key, rule["value"], rule["display"], 0.9 * spec.get("trust", 1.0), mt.group(0))
+            groups = [""] + [g or "" for g in mt.groups()]
+            val = rule.get("value", rule.get("display"))
+            val = val.format(*groups) if isinstance(val, str) else val
+            disp = str(rule.get("display", val)).format(*groups)
+            return _result(key, val, disp, 0.9 * spec.get("trust", 1.0), mt.group(0)[:160])
+    if spec.get("default"):                 # page recognised, pattern absent (e.g. no such task)
+        d = spec["default"]
+        return _result(key, d.get("value", d["display"]), d["display"], 0.8 * spec.get("trust", 1.0),
+                       "not listed on the page")
     return None
+
+
+_GLYPH = re.compile(r"^[^A-Za-z0-9(]+|[^A-Za-z0-9)%]+$")
+
+
+def _row_value(page: Page, m: Match, min_x: float = 0, max_x: float = 10_000) -> str:
+    """All words on the label's row to its right (any gap), e.g. a dropdown far right."""
+    cy = m.y + m.h / 2
+    tol = max(5, m.h * 0.6)
+    row = sorted([w for w in page.words if abs(w.cy - cy) <= tol and w.x >= max(m.right + 3, min_x)
+                  and w.x <= max_x], key=lambda w: w.x)
+    txt = " ".join(w.t for w in row)
+    return " ".join(t for t in (_GLYPH.sub("", x) for x in txt.split()) if t)
+
+
+def _reread_value(page: Page, m: Match) -> str:
+    """OCR the dropdown area right of a label again from its own crop.
+
+    Used when the page pass read only part of a value ("Inherited" without
+    the "(Unlimited)" after it): a small crop, contrast-stretched around its
+    own grey levels, is far easier for Tesseract than the whole screen.
+    """
+    import cv2
+    import numpy as np
+    import pytesseract
+
+    cy = int(m.y + m.h / 2)
+    row = [w for w in page.words if abs(w.cy - cy) <= max(5, m.h * 0.6) and w.x > m.right + 3]
+    x0 = int(min((w.x for w in row), default=m.right + 10)) - 6
+    reg = page.img[max(0, cy - 10):cy + 10, max(0, x0):x0 + 240]
+    if reg.size == 0:
+        return ""
+    g = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    big = cv2.resize(g, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    lo, hi = np.percentile(big, 50), np.percentile(big, 99.5)
+    st = 255 - np.clip((big - lo) * 255.0 / max(1.0, hi - lo), 0, 255).astype(np.uint8)
+    return pytesseract.image_to_string(st, config="--psm 7").strip()
+
+
+def _clean_value(txt: str) -> str:
+    """'Inherited (Unlimited) v' -> 'Unlimited'; 'Quarantine (recommended)' -> 'Quarantine'."""
+    t = re.sub(r"\s+[vV¥©’'=~]$", "", txt.strip())      # dropdown arrow read as a letter
+    mt = re.search(r"(?i)\b[il1|]n\w{2,8}\s*\(([^()]*)\)?", t)      # "Inherited (x)", OCR variants
+    if mt:
+        t = mt.group(1)
+    t = re.sub(r"(?i)\s*\(recommended\)", "", t)
+    return t.strip(" ()")
+
+
+def _value_right(page: Page, spec: dict, key: str) -> Optional[dict]:
+    """Value shown right of a label on the same row (dropdown, status text).
+
+    `map` turns the raw text into the report wording ({re, display, value});
+    without a map the cleaned text is used as is. Labels that occur several
+    times on a page can be pinned with `below`/`above` or `nth` (0-based,
+    top to bottom).
+    """
+    found = [m for m in page.find_all(spec["label"], spec.get("min_score", 80)) if _in_band(page, m, spec)]
+    if "nth" in spec:
+        found = sorted(found, key=lambda m: m.y)
+        found = found[spec["nth"]:spec["nth"] + 1]
+    for m in found[:3]:
+        raw = _row_value(page, m, spec.get("min_x", 0), spec.get("max_x", 10_000))
+        if not raw and spec.get("next_line"):       # value wrapped onto the next row
+            nxt = [w for w in page.words if 4 < w.y - (m.y + m.h) < 22 and w.x >= m.x - 5]
+            raw = " ".join(w.t for w in sorted(nxt, key=lambda w: w.x))
+        if not raw:
+            continue
+        nxt_words = [w for w in page.words if 4 < w.y - (m.y + m.h) < 22 and w.x >= m.right - 40]
+        nxt = " ".join(w.t for w in sorted(nxt_words, key=lambda w: w.x))
+        if spec.get("map") and nxt and not any(re.search(r["re"], _clean_value(raw), re.I)
+                                                for r in spec["map"]):
+            raw = f"{raw} {nxt}".strip()          # "Inherited" / "(Unlimited)" split over two rows
+        if spec.get("map") and not any(re.search(r["re"], _clean_value(raw), re.I) for r in spec["map"]):
+            again = _reread_value(page, m)
+            if again:
+                raw = again
+        val = _clean_value(raw)
+        conf = 0.85 * spec.get("trust", 1.0) * m.score / 100
+        if spec.get("vocab"):                       # snap OCR noise to a known word
+            from rapidfuzz import fuzz
+            hits = [(fuzz.partial_ratio(v.lower(), val.lower()), -len(v), v) for v in spec["vocab"]]
+            best = max(hits)
+            if best[0] < 80:
+                continue
+            val = best[2]
+        if spec.get("map"):
+            for rule in spec["map"]:
+                mt = re.search(rule["re"], val, re.I)
+                if mt:
+                    groups = [""] + [g or "" for g in mt.groups()]
+                    disp = rule["display"].format(*groups)
+                    v = rule.get("value", disp)
+                    v = v.format(*groups) if isinstance(v, str) else v
+                    return _result(key, v, disp, conf, f"{m.text}: {raw}")
+            continue
+        if len(val) >= spec.get("min_len", 2):
+            return _result(key, val, val, conf, f"{m.text}: {raw}")
+    if found and spec.get("empty"):           # label seen, nothing entered next to it
+        d = spec["empty"]
+        return _result(key, d.get("value", d["display"]), d["display"], 0.75 * spec.get("trust", 1.0),
+                       f"{found[0].text}: (empty)")
+    return None
+
+
+def _value_list(page: Page, spec: dict, key: str) -> Optional[dict]:
+    """Several label: value rows joined into one display ('Virus: Clean' ...)."""
+    parts, quotes = [], []
+    for item in spec["items"]:
+        sub = dict(item, trust=spec.get("trust", 1.0))
+        if spec.get("vocab") and "vocab" not in sub:
+            sub["vocab"] = spec["vocab"]
+        sub.setdefault("below", spec.get("below"))
+        sub.setdefault("above", spec.get("above"))
+        r = _value_right(page, sub, key)
+        if r is None:
+            if item.get("optional"):
+                continue
+            return None
+        parts.append(f"{item.get('name', item['label'].rstrip(':'))}: {r['display']}")
+        quotes.append(r["quote"])
+    head = [spec["prefix"]] if spec.get("prefix") else []
+    display = "\n".join(head + parts)
+    share = len(parts) / max(1, len(spec["items"]))      # the fullest capture wins
+    return _result(key, display, display, 0.85 * spec.get("trust", 1.0) * share, "; ".join(quotes)[:200])
 
 
 def _toggles(page: Page, spec: dict, key: str) -> Optional[dict]:
@@ -461,10 +659,23 @@ def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
     allocation on an indented row underneath.
     """
     row_re = re.compile(spec.get("row_re", r"Endpoint|Security|Protection"), re.I)
-    lines = [" ".join(w.t for w in ln) for ln in sorted(page.lines, key=lambda ln: (ln[0].y, ln[0].x))]
+    ordered = sorted(page.lines, key=lambda ln: (ln[0].y, ln[0].x))
+    lines = [" ".join(w.t for w in ln) for ln in ordered]
 
-    def dates(line):
-        return [d for d in re.findall(r"(20\d\d)-(\d\d)-(\d\d)", line) if 2015 <= int(d[0]) <= 2045]
+    def valid(d):
+        try:
+            dt.date(int(d[0]), int(d[1]), int(d[2]))
+            return 2015 <= int(d[0]) <= 2045
+        except ValueError:
+            return False
+
+    def dates(line, words=None):
+        found = re.findall(r"(20\d\d)[-. ]?(\d\d)[-. ]?(\d\d)", line)
+        good = [d for d in found if valid(d)]
+        if words is not None and len(good) < len(found):
+            # a misread digit ("2028-04-00"): crop each date and read it again, digits only
+            good = [d for d in (_reread_date(page, w) for w in words if re.match(r"20\d\d", w.t)) if d] or good
+        return good
 
     def first_int(line):
         for n in re.findall(r"(?<![\d-])(\d{1,3}(?:,\d{3})+|\d{1,6})(?![\d-])", line):
@@ -475,12 +686,12 @@ def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
 
     def clean_name(line):
         name = re.split(r"\s+(Paid|Trial|Evaluation|Free)\b", line)[0]
-        name = re.sub(r"^(?:[^A-Za-z]+|[a-z]{1,3}\s+)+", "", name)      # row icons / expand arrow
+        name = re.sub(r"^(?:[^A-Za-z]+|[a-z]{1,3}\s+|[A-Z]\s+)+(?=[A-Z][a-z])", "", name)  # row icons / expand arrow
         return re.sub(r"\bTrendAl\b", "TrendAI", name).strip()             # common OCR slip
 
     rows = []
     for i, line in enumerate(lines):
-        ds = dates(line)
+        ds = dates(line, ordered[i])
         if not ds or not re.search(r"\b(Paid|Trial|Evaluation|Free)\b", line):
             continue
         name, units = clean_name(line), None
@@ -518,16 +729,95 @@ def _license(page: Page, spec: dict, key_prefix: str) -> list[dict]:
     return out
 
 
+def _reread_date(page: Page, w: Word) -> Optional[tuple]:
+    """Read a yyyy-mm-dd date again from its own crop.
+
+    Several enlargements / thresholds are tried; a date is accepted only when
+    at least two readings agree on the same valid date.
+    """
+    import cv2
+    import numpy as np
+    import pytesseract
+    from collections import Counter
+
+    x0, y0 = int(w.x) - 2, int(w.y) - 4
+    reg = page.img[max(0, y0):y0 + int(w.h) + 8, max(0, x0):x0 + 80]
+    if reg.size == 0:
+        return None
+    g = cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY)
+    if np.median(g) < 128:
+        g = 255 - g
+    cfg = "--psm 7 -c tessedit_char_whitelist=0123456789-."
+    votes: Counter = Counter()
+    for fx in (3, 4, 5, 6):
+        big = cv2.resize(g, None, fx=fx, fy=fx, interpolation=cv2.INTER_CUBIC)
+        _, th = cv2.threshold(big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        for im in (big, th, cv2.GaussianBlur(big, (3, 3), 0)):
+            mt = re.search(r"(20\d\d)[-.]?(\d\d)[-.]?(\d\d)", pytesseract.image_to_string(im, config=cfg))
+            if not mt:
+                continue
+            try:
+                dt.date(*(int(x) for x in mt.groups()))
+            except ValueError:
+                continue
+            votes[mt.groups()] += 1
+    if votes:
+        best, n = votes.most_common(1)[0]
+        if n >= 2 and n > sum(votes.values()) / 2:
+            return best
+    return None
+
+
 KINDS = {"checkbox": _checkbox, "all_checked": _all_checked, "radio": _radio,
          "radio_rows": _radio_rows, "text": _text, "toggles": _toggles, "number_box": _number_box,
-         "radio_ordered": _radio_ordered}
+         "radio_ordered": _radio_ordered, "value_right": _value_right, "value_list": _value_list}
+
+
+def page_scope(page: Page, specs: dict) -> dict[str, str]:
+    """Which policy / scan configuration a page belongs to.
+
+    Field keys may contain placeholders, e.g. ``{p}.heartbeat`` (p = which
+    policy) or ``swp.{c}.dim`` (c = which malware scan configuration). The
+    window title / breadcrumb at the top of the capture decides ("Policy:
+    Base Policy > Linux > Linux Server"); the label the analyst typed above
+    the screenshot is the fallback.
+    """
+    found: dict[str, str] = {}
+    head = "\n".join(page.text.splitlines()[:14])
+    for dim, values in (specs.get("scopes") or {}).items():
+        for name, sc in values.items():
+            if any(re.search(pat, head, re.I) for pat in sc.get("head", [])):
+                found[dim] = name
+                break
+        else:
+            for name, sc in values.items():
+                if any(re.search(pat, page.section or "", re.I) for pat in sc.get("section", [])):
+                    found[dim] = name
+                    break
+    return found
+
+
+def _expand(key: str, scope: dict[str, str]) -> Optional[str]:
+    for dim in re.findall(r"\{(\w)\}", key):
+        if dim not in scope:
+            return None
+        key = key.replace("{" + dim + "}", scope[dim])
+    return key
 
 
 def read_page(page: Page, specs: dict, wanted: Optional[set] = None) -> list[dict]:
     out: list[dict] = []
+    scope = page_scope(page, specs) if specs.get("scopes") else {}
     for key, spec in specs.get("fields", {}).items():
+        if "{" in key:
+            key = _expand(key, scope)
+            if key is None:
+                continue
         if wanted is not None and key not in wanted and not key.startswith("license"):
             continue
+        if spec.get("not_page") and page.has_any(spec["not_page"]):
+            continue
+        pg = page.plain if spec.get("pass") == "plain" else page
         if spec.get("page") and not page.has_any(spec["page"]):
             continue
         if spec.get("page_all") and not all(page.has_any([p]) for p in spec["page_all"]):
@@ -535,9 +825,9 @@ def read_page(page: Page, specs: dict, wanted: Optional[set] = None) -> list[dic
         kind = spec["kind"]
         try:
             if kind == "license":
-                out.extend(_license(page, spec, key))
+                out.extend(_license(pg, spec, key))
                 continue
-            r = KINDS[kind](page, spec, key)
+            r = KINDS[kind](pg, spec, key)
         except Exception as exc:  # one odd page must not stop the run
             r = None
             out.append({"key": f"_error.{key}", "error": str(exc)})
@@ -582,7 +872,11 @@ def run(docx_path, cache_path, pack: str = "apexone_sep", progress=print) -> lis
     for shot in shots:
         tag = f"{shot.sha1}:{spec_hash}"
         if tag not in raw:
-            page = Page(shot.data, shot.filename.split("/")[-1])
+            ocr_opts = specs.get("ocr") or {}
+            page = Page(shot.data, shot.filename.split("/")[-1],
+                        stretch=tuple(ocr_opts["stretch"]) if ocr_opts.get("stretch") else None,
+                        scale=int(ocr_opts.get("scale", SCALE)), section=shot.section,
+                        checkbox_style=ocr_opts.get("checkbox_style", "fill"))
             raw[tag] = {"file": shot.filename, "section": shot.section,
                         "results": read_page(page, specs), "dates": page_dates(page.text)}
             done += 1
@@ -638,10 +932,18 @@ def aggregate(per_page: list[list[dict]], specs: dict) -> list[dict]:
                             f"{t['on']} of {total} notification switches on ({', '.join(t['pages'])})")
 
     # derived values (e.g. Update Agent options only apply to a customised source)
-    for key, spec in specs.get("fields", {}).items():
-        for rule in spec.get("derive", []) or []:
-            src = best.get(key)
-            if src and str(src["value"]) == str(rule["when"]):
-                for dkey, (val, disp) in rule["set"].items():
-                    best[dkey] = _result(dkey, val, disp, src["confidence"], f"derived from {key}")
+    import itertools
+    dims = specs.get("scopes") or {}
+    for key0, spec in specs.get("fields", {}).items():
+        used = [d for d in re.findall(r"\{(\w)\}", key0) if d in dims]
+        for combo in itertools.product(*[list(dims[d]) for d in used]) if used else [()]:
+            sc = dict(zip(used, combo))
+            key = _expand(key0, sc)
+            for rule in spec.get("derive", []) or []:
+                src = best.get(key)
+                if src and str(src["value"]) == str(rule["when"]):
+                    for dkey, (val, disp) in rule["set"].items():
+                        dkey = _expand(dkey, sc) or dkey
+                        if dkey not in best or rule.get("override", True):
+                            best[dkey] = _result(dkey, val, disp, src["confidence"], f"derived from {key}")
     return list(best.values())
