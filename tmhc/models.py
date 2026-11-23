@@ -125,6 +125,7 @@ class HealthCheck:
     rows_policy: list[ReportRow] = field(default_factory=list)
     gaps_server: list[Gap] = field(default_factory=list)
     gaps_policy: list[Gap] = field(default_factory=list)
+    summaries: list[str] = field(default_factory=list)   # short executive-summary bullets
     warnings: list[str] = field(default_factory=list)
 
     def add_fact(self, fact: Fact) -> None:

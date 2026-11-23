@@ -1,0 +1,6 @@
+<tr class="{{ 'cl-blank' if not r.deployed }}"><td>{{ r.setting }}{% if r.prefilled %}<div class="muted" style="font-size:12px">read from screenshot: {{ r.prefilled }}</div>{% endif %}</td>
+<td class="muted">{{ r.recommended }}</td><td class="cl-input">
+{% if r.choices %}<select name="v::{{ r.key }}"><option value=""></option>{% for c in r.choices %}<option {{ 'selected' if r.deployed==c }}>{{ c }}</option>{% endfor %}{% if r.deployed and r.deployed not in r.choices %}<option selected>{{ r.deployed }}</option>{% endif %}</select>
+{% else %}<input type="text" name="v::{{ r.key }}" value="{{ r.deployed }}" list="dl-{{ loop_id }}" placeholder="{{ 'YYYY-MM-DD' if r.type=='date' else ('number' if r.type=='int' else 'pick or type as shown') }}">
+<datalist id="dl-{{ loop_id }}">{% for s in r.suggest %}<option value="{{ s }}">{% endfor %}</datalist>{% endif %}
+</td><td class="muted" style="font-size:12px">{{ r.where }}</td></tr>

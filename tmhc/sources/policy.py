@@ -96,7 +96,7 @@ def _int(v: Any) -> Any:
 def _desktop_server(settings: dict, desk_key: str, srv_key: str) -> tuple[str, str]:
     """Render the Windows desktop / Windows Server pair used widely in the report."""
     d, s = _truthy(settings.get(desk_key)), _truthy(settings.get(srv_key))
-    return f"Windows Desktop: {_onoff(d)} Windows Server: {_onoff(s)}", (d, s)
+    return f"Windows desktops: {_onoff(d)}\nWindows Server platforms: {_onoff(s)}", (d, s)
 
 
 def _decode_cust_action(raw: str) -> str:
@@ -180,7 +180,7 @@ def _scan_target_facts(m: dict, prefix: str, out: list[Fact], evidence: str) -> 
         layer = m.get("OleLayer")
         enabled = str(layer) not in ("", "0", "None")
         add("ole_scan", enabled,
-            f"Enabled Maximum layers: {layer}" if enabled else "Disabled")
+            f"Enabled\nMaximum layers: {layer}" if enabled else "Disabled")
     if "OleExploitDetection" in m:
         add("ole_exploit", _truthy(m["OleExploitDetection"]),
             _onoff(m["OleExploitDetection"]))
@@ -189,7 +189,7 @@ def _scan_target_facts(m: dict, prefix: str, out: list[Fact], evidence: str) -> 
     if "ScanCompressed" in m:
         on = _truthy(m["ScanCompressed"])
         add("compressed_scan", on,
-            f"Enabled Maximum Layer: {m.get('CompressedLayer')}" if on else "Disabled")
+            f"Enabled\nMaximum Layer : {m.get('CompressedLayer')}" if on else "Disabled")
     if "MaximumExtractFileSize" in m:
         add("compressed_max_size", m["MaximumExtractFileSize"],
             f"{m['MaximumExtractFileSize']} MB")
@@ -211,6 +211,11 @@ def _scan_target_facts(m: dict, prefix: str, out: list[Fact], evidence: str) -> 
         decoded = _decode_cust_action(m.get("CustAction", ""))
         add("action_mode", "activeaction" if active else "specific",
             "Use ActiveAction" if active else f"Use specific action. {decoded}")
+    for spy_key in ("SpyBlockNCleanAction", "SpyCleanAction"):
+        if spy_key in m:
+            add("spyware_clean", _truthy(m[spy_key]),
+                "Clean: Enabled" if _truthy(m[spy_key]) else "Clean: Disabled")
+            break
     if "BkUpIfClean" in m:
         add("backup_before_clean", _truthy(m["BkUpIfClean"]), _onoff(m["BkUpIfClean"]))
     if "EnableAggressiveClean" in m:
@@ -254,7 +259,7 @@ def _scan_target_facts(m: dict, prefix: str, out: list[Fact], evidence: str) -> 
     if "ScanIncoming" in m or "ScanOutgoing" in m:
         inc, outg = _truthy(m.get("ScanIncoming")), _truthy(m.get("ScanOutgoing"))
         if inc and outg:
-            disp = "created/modified and retrieved"
+            disp = "created /modified and retrieved"
         elif inc:
             disp = "created/modified"
         elif outg:
@@ -323,7 +328,7 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         add("policy.dynamic_intelligence_mode", _truthy(m.get("DIM")), _onoff(m.get("DIM")))
         add("policy.monitoring_level",
             (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')}) "
+            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
             f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
 
     # ---- the four scan types --------------------------------------------
@@ -374,15 +379,15 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         add("policy.pml.enabled", _truthy(m.get("ENABLE_TRENDX")), _onoff(m.get("ENABLE_TRENDX")))
         add("policy.pml.monitoring_level",
             (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')}) "
+            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
             f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
         file_on = _truthy(m.get("ENABLE_FILE_ACTION"))
         add("policy.pml.file_action", (file_on, m.get("FILE_ACTION_FOR_TRENDX")),
-            "Enabled - Quarantine" if file_on and str(m.get("FILE_ACTION_FOR_TRENDX")) == "0"
+            "Enable-Quarantine" if file_on and str(m.get("FILE_ACTION_FOR_TRENDX")) == "0"
             else ("Enabled - Log only" if file_on else "Disabled"))
         proc_on = _truthy(m.get("ENABLE_PROCESS_ACTION"))
         add("policy.pml.process_action", (proc_on, m.get("PROCESS_ACTION_FOR_TRENDX")),
-            "Enabled - Terminate" if proc_on and str(m.get("PROCESS_ACTION_FOR_TRENDX")) == "0"
+            "Enable-Terminate" if proc_on and str(m.get("PROCESS_ACTION_FOR_TRENDX")) == "0"
             else ("Enabled - Log only" if proc_on else "Disabled"))
         exc = m.get("EXCEPTIONS") or []
         add("policy.pml.exceptions", exc, "Configured" if exc else "Not configured")
@@ -394,7 +399,7 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         srv = _truthy(m.get("URLFilterEnableServerPlatform_InOffice")) or \
               _truthy(m.get("URLFilterEnableServerPlatform_OutOffice"))
         add("policy.wr.enabled", (desk_in or desk_out, srv),
-            f"Windows Desktop: {_onoff(desk_in or desk_out)} "
+            f"Windows Desktop: {_onoff(desk_in or desk_out)}\n"
             f"Windows Server: {_onoff(srv)}")
         add("policy.wr.assessment_mode",
             _truthy(m.get("URLFilterEnableAss_InOffice")),
@@ -402,7 +407,7 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         https_in = _truthy(m.get("URLFilterEnableHttpsPlugin_InOffice"))
         https_out = _truthy(m.get("URLFilterEnableHttpsPlugin_OutOffice"))
         add("policy.wr.check_https", (https_in, https_out),
-            f"{_onoff(https_in)} (Internal) {_onoff(https_out)} (External)")
+            f"{_onoff(https_in)} (Internal)\n{_onoff(https_out)} (External)")
         off = [n for n, on in (("internal", https_in), ("external", https_out)) if not on]
         add("policy.wr.check_https_off_for", off,
             " and ".join(off) + " agents" if off else "no agents")
@@ -432,7 +437,7 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
             f"{_onoff(rr)} - {'Block' if str(m.get('ActionForRR')) == '1' else 'Log'}")
         add("policy.sc.monitoring_level",
             (m.get("DetectionLevel"), m.get("PreventionLevel")),
-            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')}) "
+            f"Detection-{m.get('DetectionLevel')} ({LEVELS.get(_int(m.get('DetectionLevel')), '?')})\n"
             f"Prevention-{m.get('PreventionLevel')} ({LEVELS.get(_int(m.get('PreventionLevel')), '?')})")
         add("policy.sc.clean_on_cc", _truthy(m.get("EnableCNP")), _onoff(m.get("EnableCNP")))
 
@@ -518,17 +523,53 @@ def extract(path: str | Path) -> tuple[list[Fact], PolicyExport]:
         add("policy.priv.configure_scheduled_scan", _truthy(m.get("AllowCfgPS")),
             _onoff(m.get("AllowCfgPS")))
         if "Uninst" in m:
-            add("policy.priv.uninstall_password", not _truthy(m.get("Uninst")),
-                "Password required" if not _truthy(m.get("Uninst")) else "Allowed without password")
+            ok = not _truthy(m.get("Uninst")) and bool(m.get("New_Uninstall_Pwd"))
+            add("policy.priv.uninstall_password", ok, "Enabled" if ok else "Disabled")
         if "Unload" in m:
-            add("policy.priv.unload_password", not _truthy(m.get("Unload")),
-                "Password required" if not _truthy(m.get("Unload")) else "Allowed without password")
+            ok = not _truthy(m.get("Unload")) and bool(m.get("New_Unload_Pwd"))
+            add("policy.priv.unload_password", ok, "Enabled" if ok else "Disabled")
         if "AllowScheduleUpdate" in m:
             add("policy.priv.toggle_scheduled_updates", _truthy(m.get("AllowScheduleUpdate")),
                 _onoff(m.get("AllowScheduleUpdate")))
         if "AllowUpdateFromTMAU" in m:
             add("policy.priv.update_from_activeupdate", _truthy(m.get("AllowUpdateFromTMAU")),
                 _onoff(m.get("AllowUpdateFromTMAU")))
+        # combined rows as laid out in the report
+        scan_cfg = (_truthy(m.get("AllowCfgMS")), _truthy(m.get("AllowCfgRT")), _truthy(m.get("AllowCfgPS")))
+        add("policy.priv.scan_privileges", scan_cfg,
+            f"Configure Manual Scan settings: {_onoff(scan_cfg[0])}\n"
+            f"Configure Real-time Scan settings: {_onoff(scan_cfg[1])}\n"
+            f"Configure Scheduled Scan settings: {_onoff(scan_cfg[2])}")
+        sched = (_truthy(m.get("AllowDelayScheduleScan")), _truthy(m.get("AllowStopScheduleScan")))
+        add("policy.priv.scheduled_scan_privileges", sched,
+            f"Postpone Scheduled Scan : {_onoff(sched[0])}\nSkip and stop Scheduled Scan : {_onoff(sched[1])}")
+        simple = {
+            "policy.priv.firewall_display": "DisplayPFWTab",
+            "policy.priv.firewall_toggle": "AllowControlPFW",
+            "policy.priv.firewall_send_logs": "AllowSendPFWLog",
+            "policy.priv.bm_display": "AllowConfigBM",
+            "policy.priv.trusted_program_display": "AllowConfigTrustProgram",
+            "policy.priv.mail_scan_display": "MailScanPageOnOff",
+            "policy.priv.proxy_settings": "ProxySettingOnOff",
+            "policy.priv.update_now": "AllowUpdateNow",
+            "policy.priv.coexist_conversion": "AllowPromoteCoexist",
+            "policy.priv.schedule_update_on_agents": "ScheduleUpdateStatus",
+            "policy.priv.pop3_scan": "EnablePop3MailScan",
+        }
+        for key, src in simple.items():
+            if src in m:
+                add(key, _truthy(m[src]), _onoff(m[src]))
+        if "NoProgramUpgrade" in m or "NoEngineUpgrade" in m:
+            parts = [n for n, flag in (("program", "NoProgramUpgrade"), ("engine", "NoEngineUpgrade"))
+                     if _truthy(m.get(flag))]
+            add("policy.priv.update_components", not parts,
+                "All components" if not parts else "All components except " + " and ".join(parts) + " updates")
+        if "EnableGCLCache" in m or "EnableODSCache" in m:
+            both = _truthy(m.get("EnableGCLCache")) and _truthy(m.get("EnableODSCache"))
+            add("policy.priv.scan_cache", both,
+                "Enabled" if both else
+                f"Digital signature cache: {_onoff(m.get('EnableGCLCache'))}, "
+                f"On-demand scan cache: {_onoff(m.get('EnableODSCache'))}")
 
     # ---- additional service settings --------------------------------------
     m = pol.mod("additional_services")

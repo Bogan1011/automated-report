@@ -27,6 +27,9 @@
 #
 # gap text placeholders: {deployed} (the row's deployed text) and
 # {m.<metric>} (any metric from the agent list, e.g. {m.offline}).
+# summary: optional short bullet for the executive summary when the row
+#          fails; **bold** marks bold text. {deployed_lower} is also available.
+# none_enabled: every element of a tuple value is off (combined privilege rows)
 # ---------------------------------------------------------------------------
 
 meta:
@@ -105,7 +108,7 @@ server:
         - {component: Clean/Delete infected files within compressed files, recommended: Enable, key: global.clean_compressed, check: enabled}
     - heading: Spyware/Grayware Scan Settings Only
       rows:
-        - {component: Scan for cookies, recommended: Enable, key: global.scan_cookies, check: enabled,
+        - {component: Scan for cookies, recommended: Enable, key: global.scan_cookies, check: enabled, summary: "**Scan for cookies** is disabled.",
            gap: "Scan for Cookies and Count cookie into spyware log under Global agent settings is disabled, recommended to enable it to scan cookies for spyware/grayware and to include logs of scanned cookies that are found to be spyware."}
         - {component: Count cookie into spyware log, recommended: Enable, key: global.count_cookie, check: enabled, gap_merge_with: global.scan_cookies}
     - heading: Firewall Settings
@@ -166,11 +169,13 @@ policy:
       scope: server
       rows:
         - {component: Schedule Update, sub: Download Schedule, recommended: 1 hour, key: admin.schedule_update, check: {in: ["1 hour", "hourly", "every hour", "every 1 hour"]},
+           summary: "**Component Scheduled Update** in standard endpoint protection is configured for {deployed}.",
            gap: "Component Scheduled Update in Standard Endpoint Protection is configured in {deployed}, recommended to configure Every Hour to keep the components up to date."}
         - {component: Schedule Update, sub: Deployment Plan, recommended: immediately, key: admin.deployment_plan, check: {contains: immediate}}
         - {component: Active Directory and Compliance Settings, recommended: Enable Active Directory synchronization, key: admin.ad_sync, check: enabled, fail: info}
         - {component: Syslog Settings, recommended: Enable Syslog forwarding, key: admin.syslog, check: enabled, fail: info}
         - {component: Event Notifications, recommended: Enable ( Advanced Threat Activity & Known threat activity), key: admin.event_notifications, check: {equals: Enabled}, fail: info,
+           summary: {partially enabled: "**Event notifications** are partially configured.", _default: "**Event notifications** are {deployed_lower}."},
            gap: "In Standard Endpoint Protection Event Notifications are {deployed}, recommended to enable all notifications for Advanced Threat Activity & Known threat activity."}
         - {component: Inactive Agents Automatically remove agents if inactive, recommended: 30 Days, key: admin.inactive_agent_removal, check: enabled}
         - {component: Suspicious Object Sync Managed Products, recommended: Send suspicious objects to managed products, key: admin.so_sync, check: enabled}
@@ -224,6 +229,7 @@ policy:
     - {group: Action, component: "", recommended: "Backup files before cleaning: Enable", key: "{p}.backup_before_clean", check: enabled}
     - {group: Action, component: "", recommended: "Damage Cleanup Services Clean type: Advance Cleanup", key: "{p}.clean_type", check: {equals: Advance Cleanup}, skip: [policy.realtime]}
     - {group: Action, component: "", recommended: "Run cleanup when probable virus/malware is detected: Enable", key: "{p}.cleanup_probable", check: enabled}
+    - {group: Action, component: "", recommended: "Clean: Apex One terminates processes or delete registries, files, cookies and shortcuts: Enable", key: "{p}.spyware_clean", check: enabled}
     - {group: Action, component: "", recommended: "Display a notification message on the endpoint when spyware/grayware is detected: Enable", key: "{p}.notify_spyware", check: enabled, pass: info, only: [policy.realtime, policy.scheduled]}
     - {group: Action, component: "", recommended: "Advanced Malware Detection : Use the same action for all portable executable files with threats ( quarantine)", key: "{p}.advanced_malware_detection", check: {equals: customised},
        gap_shared: advanced_malware_detection}
@@ -305,16 +311,30 @@ policy:
         - {component: Update Agent ( configure separate  policy for update agent), recommended: "Component updates: Enable Domain settings: Enable Security Agent programs and hot fixes : Enable", key: policy.update_agent.configured, check: info}
     - heading: Privileges & Other Settings
       rows:
-        - {group: Scan, recommended: "Configure Manual Scan settings: Disable", key: policy.priv.configure_manual_scan, check: disabled}
-        - {group: Scan, recommended: "Configure Real-time Scan settings: Disable", key: policy.priv.configure_realtime_scan, check: disabled,
+        - {component: Independent mode, recommended: Disabled, key: policy.priv.independent_mode, check: disabled}
+        - {component: Scan, recommended: "Configure Manual Scan settings: Disable Configure Real-time Scan settings: Disable Configure Scheduled Scan settings: Disable", key: policy.priv.scan_privileges, check: none_enabled}
+        - {component: Scan, recommended: "Configure Real-time Scan settings: Disable", key: policy.priv.configure_realtime_scan, check: disabled, show: false,
            gap: "Users are allowed to configure Real-time Scan settings on the agent, recommended to remove this privilege."}
-        - {group: Scan, recommended: "Configure Scheduled Scan settings: Disable", key: policy.priv.configure_scheduled_scan, check: disabled}
+        - {component: Scheduled Scans, recommended: "Postpone Scheduled Scan : Disable Skip and stop Scheduled Scan : Disable", key: policy.priv.scheduled_scan_privileges, check: none_enabled}
+        - {group: Firewall, recommended: "Display the Firewall settings on the Security Agent console : Enable", key: policy.priv.firewall_display, check: enabled, fail: info}
+        - {group: Firewall, recommended: "Allow users to enable/disable the firewall and the firewall violation notification message : Disable", key: policy.priv.firewall_toggle, check: disabled}
+        - {group: Firewall, recommended: "Allow Security Agents to send firewall logs to the Apex One server : Disable", key: policy.priv.firewall_send_logs, check: disabled, fail: info}
+        - {component: Behaviour Monitoring, recommended: "Display the Behavior Monitoring settings on the Security Agent console : Disable", key: policy.priv.bm_display, check: disabled}
+        - {component: Trusted Program List, recommended: "Display the Trusted Program List on the Security Agent console : Disable", key: policy.priv.trusted_program_display, check: disabled}
+        - {component: Mail Scan, recommended: "Display the Mail Scan settings on the Security Agent console", key: policy.priv.mail_scan_display, check: info}
+        - {component: Proxy Settings, recommended: "Allow users to configure proxy settings", key: policy.priv.proxy_settings, check: info}
+        - {group: Component Updates, recommended: "Allow users to do the following Perform \"Update Now\" : Enable", key: policy.priv.update_now, check: enabled, fail: info}
         - {group: Component Updates, recommended: "Enable/Disable schedule-based updates : Disable", key: policy.priv.toggle_scheduled_updates, check: disabled}
         - {component: Agent Unload and Unlock, recommended: Set a Complex password, key: policy.priv.unload_password, check: enabled, fail: critical,
            gap: "Users can unload the Security Agent without a password, recommended to require a complex password."}
         - {component: Agent uninstallation, recommended: Set a Complex password, key: policy.priv.uninstall_password, check: enabled, fail: critical,
            gap: "Users can uninstall the Security Agent without a password, recommended to require a complex password."}
+        - {component: Co-exist Mode Agent Conversion, recommended: Disable, key: policy.priv.coexist_conversion, check: disabled}
         - {group: Update Settings, recommended: "Security Agents download updates from the Trend Micro Active Update Server: Enable", key: policy.priv.update_from_activeupdate, check: enabled}
+        - {group: Update Settings, recommended: "schedule-based updates on Security Agent: Enable", key: policy.priv.schedule_update_on_agents, check: enabled}
+        - {group: Update Settings, recommended: "Security Agents only update the following components: All components", key: policy.priv.update_components, check: {equals: All components}}
+        - {component: Cache Settings for Scans, recommended: "Enable the digital signature cache Enable the on-demand scan cache", key: policy.priv.scan_cache, check: enabled}
+        - {component: POP3 Email Scan Settings, recommended: Enable, key: policy.priv.pop3_scan, check: enabled, fail: info}
     - heading: ADDITIONAL SERVICE SETTINGS
       rows:
         - {component: Unauthorized Change Prevention Service, recommended: "Windows desktops : Enable Windows Server platforms( performance mode ) : Enable", key: policy.svc.unauthorized_change_prevention, check: enabled}

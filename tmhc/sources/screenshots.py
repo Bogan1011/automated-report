@@ -210,7 +210,13 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
                 vocab = codes
         label = " - ".join(x for x in (block, rule.get("group"), rule.get("component"),
                                        rule.get("sub"), rule.get("recommended")) if x)
-        cat[key] = {"label": label.replace("{p}", ""), "type": typ, "vocab": vocab,
+        chk = rule.get("check")
+        suggest: list[str] = []
+        if isinstance(chk, dict):
+            arg = next(iter(chk.values()))
+            suggest = [str(a) for a in (arg if isinstance(arg, list) else [arg])
+                       if isinstance(a, (str, int)) and str(a) not in ("smart", "all", "specific", "customised")]
+        cat[key] = {"label": label.replace("{p}", ""), "type": typ, "vocab": vocab, "suggest": suggest,
                     "section": (block or heading or "").replace("{policy_name}", "Policy"),
                     "setting": rule.get("component") or rule.get("group") or "",
                     "recommended": rule.get("recommended", "")

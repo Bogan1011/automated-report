@@ -89,10 +89,10 @@ fields:
     derive:
       - when: standard
         set:
-          global.ua_only_from_server: [false, "N/A (standard update source)"]
-          global.ua_components: [false, "N/A (standard update source)"]
-          global.ua_domain_settings: [false, "N/A (standard update source)"]
-          global.ua_programs: [false, "N/A (standard update source)"]
+          global.ua_only_from_server: [false, "N/A"]
+          global.ua_components: [false, "N/A"]
+          global.ua_domain_settings: [false, "N/A"]
+          global.ua_programs: [false, "N/A"]
 
   global.smart_protection_feedback:
     page: ["Smart Protection Network", "Smart Feedback"]

@@ -7,8 +7,11 @@
 <div class="actions" style="margin:0">
 {% if outputs.report %}<a class="btn" href="/client/{{ name|urlencode }}/download/report">Download report</a>{% endif %}
 {% if outputs.review %}<a class="btn ghost" href="/client/{{ name|urlencode }}/download/review">Review workbook</a>{% endif %}
-{% if outputs.checklist %}<a class="btn ghost" href="/client/{{ name|urlencode }}/checklist">Fill checklist</a>{% endif %}
+{% if outputs.checklist %}<a class="btn ghost" href="/client/{{ name|urlencode }}/checklist">Fill in settings</a>{% endif %}
 </div></div>
+{% if pending and st.status not in ('building','queued') %}<div class="msg" style="background:#fff2dc;color:#8a4b00;display:flex;justify-content:space-between;align-items:center;gap:12px">
+<span><b>{{ pending }} setting{{ 's' if pending != 1 }} "Not captured"</b> in this report. Fill them in and the report rebuilds without them.</span>
+<a class="btn small" href="/client/{{ name|urlencode }}/checklist">Fill now</a></div>{% endif %}
 {% if request.query_params.get('saved') %}<p class="msg ok">Checklist saved ({{ request.query_params.get('saved') }} changes) - the report is being rebuilt.</p>{% endif %}
 {% if checks %}<div class="card"><h2>Upload check</h2><ul class="checks">{% for c in checks %}<li class="{{ c.split(':')[0] }}">{{ c }}</li>{% endfor %}</ul></div>{% endif %}
 {% if status_txt %}<div class="card"><h2>Last build</h2><pre>{{ status_txt }}</pre></div>{% endif %}

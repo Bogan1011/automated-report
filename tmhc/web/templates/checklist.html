@@ -1,12 +1,16 @@
 {% extends "base.html" %}{% set active='list' %}{% block body %}
 <p class="muted" style="margin:0 0 6px"><a href="/client/{{ name|urlencode }}">&larr; {{ prof.client_name or name }}</a></p>
-<h1>Checklist</h1><p class="sub">Settings the exports don't cover. Values read from screenshots are pre-filled - check them, fill the {{ blanks }} blank ones, and save. Leave a row blank if you did not check it.</p>
-<form method="post" action="/client/{{ name|urlencode }}/checklist"><div class="card" style="padding:0"><table>
+<h1>Settings to fill in</h1>
+<p class="sub">Settings the policy export and logs don't cover. Values read from screenshots are pre-filled - check them. Fill what you know and save; the report rebuilds by itself. A blank field shows as "Not captured" in the report.
+{% if st.status in ('building','queued') %}<br><b>The report is building now</b> - you can fill and save already; it rebuilds again with your values.{% endif %}</p>
+<form method="post" action="/client/{{ name|urlencode }}/checklist">
+{% if first %}<div class="card" style="padding:0;border-color:#e9b44c"><div style="padding:14px 16px 4px"><h2 style="margin:0">Not captured in the last report ({{ first|length }})</h2>
+<p class="muted" style="margin:4px 0 8px">These rows say "Not captured" in the report right now.</p></div><table>
 <tr><th>Setting</th><th>Trend recommended</th><th>Deployed</th><th>Where in the console</th></tr>
-{% set ns = namespace(sec='') %}{% for r in rows %}{% if r.section != ns.sec %}{% set ns.sec = r.section %}<tr class="cl-sec"><td colspan="4">{{ r.section }}</td></tr>{% endif %}
-<tr class="{{ 'cl-blank' if not r.deployed }}"><td>{{ r.setting }}{% if r.prefilled %}<div class="muted" style="font-size:12px">read from screenshot: {{ r.prefilled }}</div>{% endif %}</td>
-<td class="muted">{{ r.recommended }}</td><td class="cl-input">
-{% if r.choices %}<select name="v::{{ r.key }}"><option value=""></option>{% for c in r.choices %}<option {{ 'selected' if r.deployed==c }}>{{ c }}</option>{% endfor %}{% if r.deployed and r.deployed not in r.choices %}<option selected>{{ r.deployed }}</option>{% endif %}</select>
-{% else %}<input type="text" name="v::{{ r.key }}" value="{{ r.deployed }}" placeholder="{{ 'YYYY-MM-DD' if r.type=='date' else ('number' if r.type=='int' else 'as shown on screen') }}">{% endif %}
-</td><td class="muted" style="font-size:12px">{{ r.where }}</td></tr>{% endfor %}</table></div>
+{% for r in first %}{% set loop_id = 'f' ~ loop.index %}{% include "_clrow.html" %}{% endfor %}</table></div>
+{% elif built %}<p class="msg ok">Nothing is "Not captured" in the last report.</p>{% endif %}
+<div class="card" style="padding:0"><div style="padding:14px 16px 4px"><h2 style="margin:0">{{ 'All other settings' if first else 'All settings' }}</h2></div><table>
+<tr><th>Setting</th><th>Trend recommended</th><th>Deployed</th><th>Where in the console</th></tr>
+{% set ns = namespace(sec='') %}{% for r in rest %}{% if r.section != ns.sec %}{% set ns.sec = r.section %}<tr class="cl-sec"><td colspan="4">{{ r.section }}</td></tr>{% endif %}
+{% set loop_id = 'r' ~ loop.index %}{% include "_clrow.html" %}{% endfor %}</table></div>
 <div class="actions"><button class="btn">Save and rebuild report</button><a class="btn ghost" href="/client/{{ name|urlencode }}/download/checklist">Download as Excel</a></div></form>{% endblock %}

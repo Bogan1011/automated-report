@@ -9,7 +9,7 @@ from typing import Optional
 
 import docx
 from docx.oxml.ns import qn
-from docx.shared import Inches
+from docx.shared import Emu, Inches
 from docx.table import _Cell
 
 from ..models import Gap, HealthCheck, ReportRow, Status
@@ -19,7 +19,7 @@ from .docx_utils import (clear_drawings, enable_update_fields, find_table_with,
 HERE = Path(__file__).resolve().parent
 ASSETS = HERE / "assets"
 DEFAULT_TEMPLATE = HERE / "templates" / "sep_report_template.docx"
-ICON_WIDTH = Inches(0.17)
+ICON_WIDTH = Emu(180975)   # same size as in the analysts' reports
 
 
 # --------------------------------------------------------------------------
@@ -41,6 +41,7 @@ def _headline(text: str) -> str:
 
 
 def executive_findings(hc: HealthCheck) -> list[str]:
+    """Short bullets with bold key terms, in the order used in the manual reports."""
     m = hc.metrics
     out: list[str] = []
     lic_name = hc.get("license.name")
@@ -59,15 +60,10 @@ def executive_findings(hc: HealthCheck) -> list[str]:
         out.append(f"**{m['restart_required']}** endpoint required restart for update.")
     if m.get("stale_pattern_agents"):
         out.append(f"**{m['stale_pattern_agents']}** Agents have outdated patterns older than 7 days.")
-    mac = hc.get("inventory.mac_agents")
-    if mac:
-        out.append(f"Apex One (Mac) agents are also managed - {mac.display}.")
-    for g in hc.gaps_server:
-        if (g.key or "").startswith(("global.", "admin.")):
-            out.append(_headline(g.text))
+    out.extend(hc.summaries)
     if hc.gaps_policy:
-        out.append(f"The “**{hc.policy_name}**” policy is not configured as per Trend Micro "
-                   f"Best Practices ({len(hc.gaps_policy)} gaps).")
+        out.append(f"The **\u201c{hc.policy_name} Policy\u201d** policy is not configured as per Trend Micro "
+                   f"Best Practices.")
     return out
 
 
@@ -156,6 +152,55 @@ def fill_exec_summary(doc, product: str, findings: list[str]) -> None:
 
 
 # --------------------------------------------------------------------------
+# row-for-row templates ({{=key}} / {{?key|key}} tokens)
+# --------------------------------------------------------------------------
+_SEVERITY = [Status.CRITICAL, Status.CONCERN, Status.UNKNOWN, Status.INFO, Status.GOOD]
+BOLD_VALUE_PREFIXES = ("policy.priv.", "policy.svc.")
+_TOKEN = re.compile(r"^\{\{([=?])([A-Za-z0-9_.|]+)\}\}$")
+
+
+def _cell_text(tc) -> str:
+    return "".join(t.text or "" for t in tc.iter(qn("w:t"))).strip()
+
+
+def fill_token_tables(doc, hc: HealthCheck) -> int:
+    """Fill the analyst-designed tables cell by cell; returns cells filled."""
+    from ..engine.evaluate import NOT_CAPTURED
+    lookup: dict[str, tuple[str, Status]] = {}
+    for r in hc.rows_server + hc.rows_policy:
+        if r.key and r.group != "__heading__" and r.key not in lookup:
+            lookup[r.key] = (r.deployed, r.status)
+
+    def value(key: str) -> tuple[str, Status]:
+        if key in lookup:
+            return lookup[key]
+        f = hc.get(key)
+        if f is not None:                       # a fact without a rule: show it, no judgement
+            return f.display, Status.INFO
+        hc.warnings.append(f"No data for {key} (template row)")
+        return NOT_CAPTURED, Status.UNKNOWN
+
+    filled = 0
+    for table in doc.tables:
+        for tc in table._tbl.iter(qn("w:tc")):
+            m = _TOKEN.match(_cell_text(tc))
+            if not m:
+                continue
+            kind, keys = m.group(1), m.group(2).split("|")
+            if kind == "=":
+                text = value(keys[0])[0]
+                if keys[0].startswith(BOLD_VALUE_PREFIXES) and ":" in text:
+                    # house style: "Postpone Scheduled Scan : **Disabled**"
+                    text = "\n".join(re.sub(r"^(.*:\s*)(\S.*)$", r"\1**\2**", ln) for ln in text.split("\n"))
+                set_cell_text(tc, text)
+            else:
+                worst = min((value(k)[1] for k in keys), key=_SEVERITY.index)
+                _put_icon(tc, table, worst)
+            filled += 1
+    return filled
+
+
+# --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
 def render(hc: HealthCheck, out_path: str | Path, template: str | Path = DEFAULT_TEMPLATE,
@@ -163,8 +208,11 @@ def render(hc: HealthCheck, out_path: str | Path, template: str | Path = DEFAULT
     doc = docx.Document(str(template))
 
     fill_exec_summary(doc, product, executive_findings(hc))
-    fill_settings_table(doc, "{{SERVER_TABLE}}", hc.rows_server)
-    fill_settings_table(doc, "{{POLICY_TABLE}}", hc.rows_policy)
+    if find_table_with(doc, "{{SERVER_TABLE}}") is not None:     # older generated-table templates
+        fill_settings_table(doc, "{{SERVER_TABLE}}", hc.rows_server)
+        fill_settings_table(doc, "{{POLICY_TABLE}}", hc.rows_policy)
+    else:
+        fill_token_tables(doc, hc)
     fill_gap_table(doc, "{{SERVER_GAPS}}", hc.gaps_server)
     fill_gap_table(doc, "{{POLICY_GAPS}}", hc.gaps_policy)
 
@@ -181,6 +229,9 @@ def render(hc: HealthCheck, out_path: str | Path, template: str | Path = DEFAULT
         "{{customer_attendance}}": hc.attendees_customer,
         "{{trend_attendance}}": hc.attendees_trend or hc.prepared_by,
     }
+    for k, v in hc.metrics.items():
+        if isinstance(v, (str, int, float)):
+            mapping["{{m." + k + "}}"] = str(v)
     roots = [doc.element.body]
     for s in doc.sections:
         for part in (s.header, s.footer, s.first_page_header, s.first_page_footer,

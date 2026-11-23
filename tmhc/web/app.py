@@ -31,6 +31,7 @@ from fastapi.templating import Jinja2Templates
 from .. import checklist as cl
 from ..engine.evaluate import load_rules
 from ..sources import screenshots
+from ..cli import make_checklist
 from ..watch import (DEFAULT_CONFIG, _load_state, client_status, find_evidence, load_config)
 
 HERE = Path(__file__).resolve().parent
@@ -347,6 +348,10 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             ev = find_evidence(staging)
             _write_profile(staging, _profile_from_form(form, c, ev))
             notes = _check_evidence(staging, d.get("zip_password", ""))
+            try:            # checklist straight away, so blanks can be filled while it builds
+                make_checklist(staging / "profile.yaml", sync=True, quiet=True)
+            except (SystemExit, Exception) as exc:
+                notes.append(f"note: checklist will be created after the first build ({str(exc).strip()[:120]})")
             (staging / ".upload_check.json").write_text(json.dumps(notes), encoding="utf-8")
             staging.rename(c["inbox"] / name)          # appears to the watcher all at once
         except Exception:
@@ -366,7 +371,9 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         files = [{"name": p.name, "size": f"{p.stat().st_size / 1048576:.1f} MB", "at": _fmt_time(p.stat().st_mtime)}
                  for p in sorted(folder.iterdir())
                  if p.is_file() and Path(p.name).suffix.lower() in EVIDENCE_EXT and not p.name.startswith(("~$", "."))]
+        pending = [k for k in _not_captured(folder)]
         return render(request, "client.html", name=name, prof=prof, st=st, status_txt=status_txt,
+                      pending=len(pending),
                       checks=checks, files=files, outputs=_outputs(folder), products=PRODUCTS,
                       has_zip_password=bool((c.get("defaults") or {}).get("zip_password")))
 
@@ -452,17 +459,33 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                 continue
             typ = cat.get(r[0], {}).get("type", "text")
             choices = cl.BOOL_CHOICES if typ == "bool" else (cl.DESKTOP_SERVER_CHOICES if typ == "desktop_server" else None)
+            spec = cat.get(r[0], {})
+            suggest = [x for x in dict.fromkeys([*spec.get("suggest", []), "Enabled", "Disabled",
+                                                  "Not Configured", "N/A"]) if x]
             rows.append({"key": r[0], "section": r[1] or "", "setting": r[2] or "", "recommended": r[3] or "",
                          "deployed": "" if r[4] is None else str(r[4]), "notes": r[5] or "", "where": r[6] or "",
-                         "prefilled": (r[7] if len(r) > 7 else None) or "", "type": typ, "choices": choices})
+                         "prefilled": (r[7] if len(r) > 7 else None) or "", "type": typ, "choices": choices,
+                         "suggest": suggest})
         return rows
+
+    def _not_captured(folder: Path) -> list[str]:
+        p = folder / ".not_captured.json"
+        try:
+            return [x["key"] for x in json.loads(p.read_text(encoding="utf-8"))]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
 
     @app.get("/client/{name}/checklist", response_class=HTMLResponse)
     def checklist_page(request: Request, name: str):
         folder = _client_dir(cfg(), name)
         rows = _checklist_rows(folder)
+        missing = set(_not_captured(folder))
+        # rows still "Not captured" in the last build come first
+        first = [r for r in rows if r["key"] in missing and not r["deployed"]]
+        rest = [r for r in rows if r not in first]
         blanks = sum(1 for r in rows if not r["deployed"])
-        return render(request, "checklist.html", name=name, rows=rows, blanks=blanks,
+        return render(request, "checklist.html", name=name, first=first, rest=rest, blanks=blanks,
+                      built=(folder / ".not_captured.json").exists(), st=client_status(folder),
                       prof=_read_profile(folder))
 
     @app.post("/client/{name}/checklist")

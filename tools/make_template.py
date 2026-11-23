@@ -2,6 +2,7 @@
 
 Usage:
     python tools/make_template.py FINISHED_REPORT.docx OUT_TEMPLATE.docx \
+        --rows tools/sep_row_map.yaml \
         --replace "Acme Industries Private Limited=client_name" \
         --replace "Acme Endpoint Policy=policy_name" ...
 
@@ -44,7 +45,38 @@ def tcs(row):
     return row._tr.findall(qn("w:tc"))
 
 
-def build(src: Path, dst: Path, replacements: dict[str, str]) -> None:
+def _tag_rows(table, rows: dict, label: str) -> None:
+    """Keep the analyst's table; tag Deployed/Status cells of mapped rows with tokens."""
+    trs = table._tbl.findall(qn("w:tr"))
+    owners: dict[int, list[str]] = {}
+    for ri in sorted(rows):
+        spec = rows[ri] if isinstance(rows[ri], dict) else {"key": rows[ri]}
+        if ri >= len(trs):
+            raise SystemExit(f"{label}: row {ri} does not exist (table has {len(trs)} rows)")
+        cells = trs[ri].findall(qn("w:tc"))
+        if len(cells) < 3:
+            raise SystemExit(f"{label}: row {ri} is a heading row, not a data row")
+        status, deployed, rec = cells[-1], cells[-2], cells[-3]
+        set_cell_text(deployed, "{{=" + spec["key"] + "}}")
+        if spec.get("recommended"):
+            set_cell_text(rec, spec["recommended"])
+        # a Status cell merged down over several rows belongs to the first of them
+        owner = ri
+        while True:
+            pr = trs[owner].findall(qn("w:tc"))[-1].find(qn("w:tcPr"))
+            vm = pr.find(qn("w:vMerge")) if pr is not None else None
+            if vm is None or vm.get(qn("w:val")) == "restart" or owner == 0:
+                break
+            owner -= 1
+        owners.setdefault(owner, []).append(spec["key"])
+    for ri, keys in owners.items():
+        cell = trs[ri].findall(qn("w:tc"))[-1]
+        clear_drawings(cell)
+        set_cell_text(cell, "{{?" + "|".join(keys) + "}}")
+    print(f"  {label}: tagged {len(rows)} rows ({len(owners)} status cells)")
+
+
+def build(src: Path, dst: Path, replacements: dict[str, str], row_map: dict | None = None) -> None:
     doc = docx.Document(str(src))
     servers_seen = gaps_seen = 0
 
@@ -58,6 +90,10 @@ def build(src: Path, dst: Path, replacements: dict[str, str]) -> None:
             c0, c1 = tcs(t.rows[1])[0], tcs(t.rows[1])[-1]
             set_cell_text(c0, "{{EXEC_PRODUCT}}")
             set_cell_text(c1, "{{EXEC_FINDING}}")
+        elif (h.startswith("Component | Trend Recommended") or h.startswith("Component | Component")) and row_map:
+            which = "server" if servers_seen == 0 else "policy"
+            servers_seen += 1
+            _tag_rows(t, row_map.get(which) or {}, which)
         elif h.startswith("Component | Trend Recommended") or h.startswith("Component | Component"):
             token = "{{SERVER_TABLE}}" if servers_seen == 0 else "{{POLICY_TABLE}}"
             servers_seen += 1
@@ -116,10 +152,16 @@ def main() -> None:
     ap.add_argument("out")
     ap.add_argument("--replace", action="append", default=[],
                     help='"literal text=placeholder_name" (repeatable; longest first)')
+    ap.add_argument("--rows", type=Path,
+                    help="row map (e.g. tools/sep_row_map.yaml): keep the analyst's tables row for row")
     a = ap.parse_args()
     pairs = [r.split("=", 1) for r in a.replace]
     mapping = dict(sorted(((k, v) for k, v in pairs), key=lambda kv: -len(kv[0])))
-    build(Path(a.report), Path(a.out), mapping)
+    row_map = None
+    if a.rows:
+        import yaml
+        row_map = yaml.safe_load(a.rows.read_text(encoding="utf-8"))
+    build(Path(a.report), Path(a.out), mapping, row_map)
 
 
 if __name__ == "__main__":

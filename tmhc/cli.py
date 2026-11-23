@@ -165,21 +165,26 @@ def _load_exports(hc: HealthCheck, base: Path, ev: dict, opts: dict, say=print) 
             shutil.rmtree(cleanup, ignore_errors=True)
 
 
-def make_checklist(profile_path: Path, force: bool = False) -> Path:
+def make_checklist(profile_path: Path, force: bool = False, sync: bool = False, quiet: bool = False) -> Path:
+    """Create the checklist, or with sync=True bring an existing one up to date."""
     prof, base, opts, ev = _load_profile(profile_path)
     rules = load_rules(opts.get("rules", "apexone_sep"))
     hc, _ = _new_healthcheck(prof)
-    _load_exports(hc, base, ev, opts)
+    _load_exports(hc, base, ev, opts, say=(lambda *_: None) if quiet else print)
     out = base / ev.get("checklist", "checklist.xlsx")
-    if out.exists() and not force:
-        sys.exit(f"{out} already exists - it may hold your answers. Use --force to overwrite.")
     covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
-    # Pre-fill anything a local screenshot reading already found, for confirmation.
+    # Pre-fill anything a screenshot reading already found, for confirmation.
     cache = screenshots.ShotCache(base / "screenshot_cache.json")
     prefill = {f.key: f for f in cache.facts(float(opts.get("min_confidence", 0.6)))}
-    path = checklist.write(out, screenshots.field_catalogue(rules), covered,
-                           client=hc.client_name, prefill=prefill)
-    print(f"checklist: {path}  - fill the yellow 'Deployed' column, then run the report")
+    catalogue = screenshots.field_catalogue(rules)
+    if out.exists() and sync:
+        checklist.sync(out, catalogue, covered, client=hc.client_name, prefill=prefill)
+        return out
+    if out.exists() and not force:
+        sys.exit(f"{out} already exists - it may hold your answers. Use --force to overwrite.")
+    path = checklist.write(out, catalogue, covered, client=hc.client_name, prefill=prefill)
+    if not quiet:
+        print(f"checklist: {path}  - fill the yellow 'Deployed' column, then run the report")
     return path
 
 

@@ -67,12 +67,66 @@ def where(key: str) -> str:
     return ""
 
 
-def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
-          client: str = "", prefill: dict[str, Fact] | None = None) -> Path:
+def wanted_keys(catalogue: dict[str, dict], covered: Iterable[str]) -> list[str]:
+    """Settings the analyst may need to supply: everything the exports did not prove."""
     covered = set(covered)
-    prefill = prefill or {}
     # platform.* extras feed no report row; leave them out so the list is only what matters
-    keys = [k for k in catalogue if k not in covered and not k.startswith(("inventory.", "logs.", "platform."))]
+    return [k for k in catalogue if k not in covered and not k.startswith(("inventory.", "logs.", "platform."))]
+
+
+def read_values(path: str | Path) -> dict[str, dict]:
+    """key -> {deployed, notes, prefilled} for an existing checklist."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    ws = load_workbook(p, data_only=True)[SHEET]
+    out = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or not row[COL_KEY - 1]:
+            continue
+        dep = row[COL_DEPLOYED - 1]
+        if hasattr(dep, "strftime"):
+            dep = dep.strftime("%Y-%m-%d")
+        out[row[COL_KEY - 1]] = {
+            "deployed": "" if dep is None else str(dep).strip(),
+            "notes": row[COL_NOTES - 1] or "",
+            "prefilled": (row[COL_PREFILLED - 1] if len(row) >= COL_PREFILLED else None) or "",
+        }
+    return out
+
+
+def sync(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
+         client: str = "", prefill: dict[str, Fact] | None = None) -> bool:
+    """Bring an existing checklist up to date without losing anything typed into it.
+
+    Adds settings that are now missing, drops ones an export now proves, and
+    fills still-blank rows with new screenshot readings. Writes only when
+    something changed (so the watcher does not see a change every build).
+    """
+    existing = read_values(path)
+    keys = wanted_keys(catalogue, covered)
+    prefill = prefill or {}
+    rows = {}
+    for k in keys:
+        cur = existing.get(k, {"deployed": "", "notes": "", "prefilled": ""})
+        pre = prefill.get(k)
+        if not cur["deployed"] and pre is not None:
+            cur = {"deployed": pre.display, "notes": "read from screenshot - check", "prefilled": pre.display}
+        rows[k] = cur
+    same = list(existing) == keys and all(
+        existing[k]["deployed"] == rows[k]["deployed"] and str(existing[k]["prefilled"]) == str(rows[k]["prefilled"])
+        for k in keys)
+    if same and Path(path).exists():
+        return False
+    write(path, catalogue, covered, client=client, existing=rows)
+    return True
+
+
+def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
+          client: str = "", prefill: dict[str, Fact] | None = None,
+          existing: dict[str, dict] | None = None) -> Path:
+    prefill = prefill or {}
+    keys = wanted_keys(catalogue, covered)
 
     wb = Workbook()
     ws = wb.active
@@ -92,10 +146,16 @@ def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
     yellow = PatternFill("solid", fgColor="FFF2CC")
     for k in keys:
         spec = catalogue[k]
-        pre = prefill.get(k)
+        if existing is not None and k in existing:
+            e = existing[k]
+            dep, note, pref = e["deployed"], e["notes"], e["prefilled"]
+        else:
+            pre = prefill.get(k)
+            dep = pre.display if pre else ""
+            note = "read from screenshot - check" if pre else ""
+            pref = pre.display if pre else ""
         ws.append([k, spec.get("section", ""), spec.get("setting", ""), spec.get("recommended", ""),
-                   pre.display if pre else "", "read from screenshot - check" if pre else "", where(k),
-                   pre.display if pre else ""])
+                   dep or None, note, where(k), pref or None])
         r = ws.max_row
         cell = ws.cell(row=r, column=COL_DEPLOYED)
         cell.fill = yellow
@@ -133,7 +193,7 @@ def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
         "(e.g. '12 hours', 'Daily', 'Partially Enabled', '2028-04-09').",
         "Leave a row blank if you did not check it - it will show as 'Not captured'",
         "in the report instead of being guessed.",
-        "Then run:  python -m tmhc run <profile.yaml>",
+        "Then save: the report rebuilds by itself (or run: python -m tmhc run <profile.yaml>).",
     ]:
         info.append([line])
     info.column_dimensions["A"].width = 90

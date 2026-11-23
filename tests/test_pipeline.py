@@ -160,3 +160,43 @@ def test_render_fills_every_placeholder(tmp_path, cmpolicy, agent_list):
     gap_tables = [t for t in d.tables if t.rows[0].cells[0].text.strip() == "#"]
     assert len(gap_tables) == 2
     assert len(gap_tables[1].rows) - 1 == len(hc.gaps_policy)
+
+
+# --------------------------------------------------------------------------- analyst-layout template
+def test_template_keeps_analyst_tables_row_for_row():
+    from tmhc.render.docx_report import DEFAULT_TEMPLATE
+    xml = docx.Document(str(DEFAULT_TEMPLATE)).element.xml
+    assert "{{SERVER_TABLE}}" not in xml and "{{POLICY_TABLE}}" not in xml
+    assert len(re.findall(r"\{\{=[A-Za-z0-9_.]+\}\}", xml)) == 39 + 168
+    assert "{{m.license_seats}}" in xml and "{{m.latest_build}}" in xml
+
+
+def test_render_fills_every_token(tmp_path, cmpolicy, agent_list):
+    hc = _hc(**{"license.expiry": ("2028-04-09", "09 April 2028"), "license.seats": (20, "20")})
+    hc.add_facts(policy.extract(cmpolicy)[0])
+    f, m = agentlist.extract(agent_list)
+    hc.add_facts(f)
+    hc.metrics.update(m)
+    evaluate(hc, load_rules())
+    out = render(hc, tmp_path / "r.docx")
+    xml = docx.Document(str(out)).element.xml
+    assert not re.findall(r"\{\{[=?]", xml)
+    assert "Purchased Seat count - 20" in xml
+    assert "Not captured" in xml            # synthetic policy lacks many settings: shown, not guessed
+
+
+def test_checklist_sync_keeps_answers_and_adds_new_rows(tmp_path):
+    from tmhc import checklist
+    cat = screenshots.field_catalogue(load_rules())
+    p = tmp_path / "c.xlsx"
+    some = [k for k in cat if k.startswith("global.")][:3]
+    checklist.write(p, {k: cat[k] for k in some}, covered=set())
+    from openpyxl import load_workbook
+    wb = load_workbook(p)
+    wb["Checklist"].cell(row=2, column=5, value="Disabled")
+    wb.save(p)
+    assert checklist.sync(p, cat, covered=set()) is True            # new settings added
+    vals = checklist.read_values(p)
+    assert vals[some[0]]["deployed"] == "Disabled"                    # answer kept
+    assert len(vals) == len(checklist.wanted_keys(cat, set()))
+    assert checklist.sync(p, cat, covered=set()) is False           # nothing changed -> no rewrite

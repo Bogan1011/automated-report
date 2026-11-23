@@ -28,7 +28,7 @@ def load_rules(name: str = "apexone_sep") -> dict:
 def _fmt(text: Optional[str], hc: HealthCheck, deployed: str = "", extra: dict | None = None) -> str:
     if not text:
         return ""
-    ctx = {"deployed": deployed, "policy_name": hc.policy_name or "Policy"}
+    ctx = {"deployed": deployed, "deployed_lower": deployed.lower(), "policy_name": hc.policy_name or "Policy"}
     ctx.update(extra or {})
 
     def sub(match: re.Match) -> str:
@@ -89,6 +89,9 @@ def run_check(check: Any, fact: Fact, hc: HealthCheck) -> Optional[bool]:
         return _truthy(v)
     if kind == "disabled":
         return not _truthy(v)
+    if kind == "none_enabled":
+        vals = v if isinstance(v, (tuple, list)) else [v]
+        return not any(_truthy(x) for x in vals)
     if kind == "first_enabled":
         return _truthy(v[0]) if isinstance(v, (tuple, list)) and v else _truthy(v)
     if kind == "equals":
@@ -178,6 +181,15 @@ class _Builder:
                 status = _status(rule.get("fail"), Status.CONCERN)
             else:
                 status = Status.INFO
+
+        # ---- executive-summary bullet -------------------------------------
+        if result is False and rule.get("summary"):
+            summ = rule["summary"]
+            if isinstance(summ, dict):              # wording per deployed value
+                summ = summ.get(deployed.strip().lower(), summ.get("_default", ""))
+            line = _fmt(summ, hc, deployed=deployed, extra=extra)
+            if line not in hc.summaries:
+                hc.summaries.append(line)
 
         # ---- gaps --------------------------------------------------------
         gap_text = rule.get("gap")

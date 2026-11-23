@@ -210,8 +210,16 @@ def process(folder: Path, cfg: dict) -> str:
     resolve_auto_fields(prof_path)
 
     hc = build(prof_path)
-    if not (folder / "checklist.xlsx").exists():
-        make_checklist(prof_path)
+    make_checklist(prof_path, sync=True, quiet=True)      # new settings added, answers kept
+
+    # what the website should ask for: every row still "Not captured", once per setting
+    seen, pending = set(), []
+    for r in hc.rows_server + hc.rows_policy:
+        if r.deployed == NOT_CAPTURED and r.key and r.key not in seen:
+            seen.add(r.key)
+            pending.append({"key": r.key, "section": r.section, "setting": r.group or r.component,
+                            "recommended": r.recommended})
+    (folder / ".not_captured.json").write_text(json.dumps(pending, indent=1), encoding="utf-8")
 
     counts = status_counts(hc)
     missing = sorted({r.key for r in hc.rows_server + hc.rows_policy if r.deployed == NOT_CAPTURED})

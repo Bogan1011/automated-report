@@ -1,0 +1,236 @@
+# Row map for the Standard Endpoint Protection report template.
+#
+# Used once, by tools/make_template.py --rows, to turn a finished report into
+# a template that keeps every row exactly as the analyst laid it out (wording,
+# bold, merged cells, heading styles). For each data row listed here the
+# Deployed cell becomes {{=key}} and the Status cell {{?key}}; rows sharing one
+# Status cell get {{?key1|key2}} (the worst status is shown).
+#
+# Row numbers count from 0 = the header row of that table.
+# `recommended:` replaces the Trend Recommended cell text (for client-specific
+# values); {{m.metric}} is filled from the agent list at render time.
+
+server:            # "Apex One Health Check Overview" table
+  2: license.expiry
+  3: {key: inventory.deployed_agents, recommended: "Purchased Seat count - {{m.license_seats}}"}
+  4: {key: inventory.outdated_agents, display: inventory.agent_build, recommended: "Latest: {{m.latest_build}}"}
+  5: inventory.online_offline
+  6: inventory.builds_behind_n3
+  8: global.exclude_exchange
+  9: global.deferred_scanning
+  10: global.elam
+  12: global.clean_compressed
+  14: global.scan_cookies
+  15: global.count_cookie
+  17: global.firewall_enabled
+  18: global.firewall_log_interval
+  19: global.firewall_driver_restart
+  20: global.firewall_log_count
+  22: global.bm_response_timeout
+  24: global.certified_safe_software
+  25: global.sps_proxy
+  27: global.service_restart_after
+  28: global.service_restart_retries
+  29: global.service_restart_reset
+  31: global.single_log_entry
+  32: global.polling_interval
+  34: global.manual_scan_shortcut
+  35: global.pattern_alert_icon
+  36: global.restart_notification
+  37: global.agent_language
+  39: global.agent_update_schedule
+  40: global.agent_update_source
+  41: global.ua_only_from_server
+  42: global.ua_components
+  43: global.ua_domain_settings
+  44: global.ua_programs
+  45: global.smart_protection_sources
+  46: global.wrs_frs_sources
+  47: global.smart_protection_feedback
+  48: global.so_subscribed
+  49: global.so_lists_enabled
+  50: global.so_auto_update
+
+policy:            # "Standard Endpoint Protection" review table
+  2: license.expiry
+  4: admin.schedule_update
+  5: admin.deployment_plan
+  6: admin.ad_sync
+  7: admin.syslog
+  8: admin.event_notifications
+  9: admin.inactive_agent_removal
+  10: admin.so_sync
+  12: admin.policy_count
+  13: policy.scan_method
+  14: policy.dynamic_intelligence_mode
+  15: policy.monitoring_level
+  # Real Time Scan
+  17: policy.realtime.virus_scan
+  18: policy.realtime.spyware_scan
+  19: policy.realtime.scan_on
+  20: policy.realtime.files_to_scan
+  21: policy.realtime.scan_floppy_shutdown
+  22: policy.realtime.usb_boot_scan
+  23: policy.realtime.usb_all_files_scan
+  24: policy.realtime.quarantine_memory_variants
+  25: policy.realtime.ole_scan
+  26: policy.realtime.ole_exploit
+  27: policy.realtime.compressed_scan
+  28: policy.realtime.compressed_max_size
+  29: policy.realtime.compressed_file_count
+  30: policy.realtime.intellitrap
+  31: policy.realtime.cve_exploit_scan
+  32: policy.realtime.action_mode
+  33: policy.realtime.notify_virus
+  34: policy.realtime.notify_probable
+  35: policy.realtime.backup_before_clean
+  36: policy.realtime.cleanup_probable
+  37: policy.realtime.spyware_clean
+  38: policy.realtime.notify_spyware
+  39: policy.realtime.advanced_malware_detection
+  40: policy.realtime.exclusion_enabled
+  41: policy.realtime.exclude_trend_dirs
+  42: policy.realtime.exclusion_list
+  # Scheduled Scan
+  44: policy.scheduled.virus_scan
+  45: policy.scheduled.spyware_scan
+  46: policy.scheduled.schedule
+  47: policy.scheduled.files_to_scan
+  48: policy.scheduled.ole_scan
+  49: policy.scheduled.ole_exploit
+  50: policy.scheduled.compressed_scan
+  51: policy.scheduled.compressed_max_size
+  52: policy.scheduled.compressed_file_count
+  53: policy.scheduled.auto_stop
+  54: policy.scheduled.skip_on_battery
+  55: policy.scheduled.resume_interrupted
+  56: policy.scheduled.resume_missed
+  57: policy.scheduled.scan_boot
+  58: policy.scheduled.cpu_usage
+  59: policy.scheduled.action_mode
+  60: policy.scheduled.notify_virus
+  61: policy.scheduled.backup_before_clean
+  62: policy.scheduled.clean_type
+  63: policy.scheduled.cleanup_probable
+  64: policy.scheduled.spyware_clean
+  65: policy.scheduled.notify_spyware
+  66: policy.scheduled.advanced_malware_detection
+  67: policy.scheduled.exclusion_enabled
+  68: policy.scheduled.exclude_trend_dirs
+  69: policy.scheduled.exclusion_list
+  # Manual Scan
+  71: policy.manual.files_to_scan
+  72: policy.manual.scan_hidden
+  73: policy.manual.ole_scan
+  74: policy.manual.ole_exploit
+  75: policy.manual.compressed_scan
+  76: policy.manual.compressed_max_size
+  77: policy.manual.compressed_file_count
+  78: policy.manual.scan_boot
+  79: policy.manual.cpu_usage
+  80: policy.manual.action_mode
+  81: policy.manual.backup_before_clean
+  82: policy.manual.clean_type
+  83: policy.manual.cleanup_probable
+  84: policy.manual.spyware_clean
+  85: policy.manual.advanced_malware_detection
+  86: policy.manual.exclusion_enabled
+  87: policy.manual.exclude_trend_dirs
+  88: policy.manual.exclusion_list
+  # Scan Now
+  90: policy.scannow.virus_scan
+  91: policy.scannow.spyware_scan
+  92: policy.scannow.files_to_scan
+  93: policy.scannow.ole_scan
+  94: policy.scannow.ole_exploit
+  95: policy.scannow.compressed_scan
+  96: policy.scannow.compressed_max_size
+  97: policy.scannow.compressed_file_count
+  98: policy.scannow.scan_boot
+  99: policy.scannow.cpu_usage
+  100: policy.scannow.action_mode
+  101: policy.scannow.backup_before_clean
+  102: policy.scannow.clean_type
+  103: policy.scannow.cleanup_probable
+  104: policy.scannow.spyware_clean
+  105: policy.scannow.advanced_malware_detection
+  106: policy.scannow.exclusion_enabled
+  107: policy.scannow.exclude_trend_dirs
+  108: policy.scannow.exclusion_list
+  # Behaviour Monitoring
+  110: policy.bm.malware_behaviour_blocking
+  111: policy.monitoring_level
+  112: policy.bm.threats_to_block
+  113: policy.bm.protect_documents
+  114: policy.bm.backup_restore_files
+  115: policy.bm.block_ransomware_processes
+  116: policy.bm.program_inspection
+  117: policy.bm.anti_exploit
+  118: policy.bm.newly_encountered
+  119: policy.bm.event_monitoring
+  120: policy.bm.exceptions
+  # Predictive Machine Learning
+  122: policy.pml.enabled
+  123: policy.pml.monitoring_level
+  124: policy.pml.file_action
+  125: policy.pml.process_action
+  126: policy.pml.exceptions
+  # Web Reputation
+  128: policy.wr.enabled
+  129: policy.wr.assessment_mode
+  130: policy.wr.check_https
+  131: policy.wr.query_sps
+  132: policy.wr.security_level
+  133: policy.wr.browser_exploit_prevention
+  134: policy.wr.approved_blocked_urls
+  135: policy.wr.send_logs
+  # Suspicious Connection
+  137: policy.sc.global_cc_list
+  138: policy.sc.network_fingerprinting
+  139: policy.sc.monitoring_level
+  140: policy.sc.clean_on_cc
+  # Vulnerability Protection
+  142: policy.vp.enabled
+  143: policy.vp.profile
+  144: policy.vp.network_engine_mode
+  # Device Control
+  146: policy.dc.enabled
+  147: policy.dc.block_autorun
+  148: policy.dc.approved_usb_list
+  # Application Control
+  150: policy.ac.enabled
+  151: policy.ac.rules
+  152: policy.ac.lockdown
+  153: policy.ac.max_log_age
+  154: policy.ac.max_logs_per_hour
+  # Exceptions / Update Agent
+  156: policy.exceptions.trusted_programs
+  157: policy.exceptions.spyware_approved_list
+  159: policy.update_agent.configured
+  # Privileges & Other Settings
+  161: policy.priv.independent_mode
+  162: policy.priv.scan_privileges
+  163: policy.priv.scheduled_scan_privileges
+  164: policy.priv.firewall_display
+  165: policy.priv.firewall_toggle
+  166: policy.priv.firewall_send_logs
+  167: policy.priv.bm_display
+  168: policy.priv.trusted_program_display
+  169: policy.priv.mail_scan_display
+  170: policy.priv.proxy_settings
+  171: policy.priv.update_now
+  172: policy.priv.toggle_scheduled_updates
+  173: policy.priv.unload_password
+  174: policy.priv.uninstall_password
+  175: policy.priv.coexist_conversion
+  176: policy.priv.update_from_activeupdate
+  177: policy.priv.schedule_update_on_agents
+  178: policy.priv.update_components
+  179: policy.priv.scan_cache
+  180: policy.priv.pop3_scan
+  # Additional Service Settings
+  182: policy.svc.unauthorized_change_prevention
+  183: policy.svc.firewall
+  184: policy.svc.suspicious_connection
+  185: policy.svc.data_protection
+  186: policy.svc.advanced_protection

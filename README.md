@@ -88,9 +88,11 @@ one and prints the address (e.g. `http://192.168.1.70:8090`). Use
 2. The client page shows an upload check straight away (pictures found, zip
    opened with the saved password, policy export and agent list present),
    then the build status. About 4 minutes on 2 vCPU.
-3. **Fill checklist**: settings the screenshots didn't show are blank;
-   readings from screenshots are pre-filled to check. **Save** - the report
-   rebuilds in under a minute.
+3. **Fill in settings** (available from the moment you upload, even while
+   it builds): after each build, everything the report shows as
+   "Not captured" is listed first, with dropdowns or suggestions; readings
+   from screenshots are pre-filled to check. **Save** - the report rebuilds
+   in under a minute without those "Not captured" rows.
 4. **Download report** (and the review workbook). In Word, accept the prompt
    to update the table of contents.
 
@@ -179,16 +181,20 @@ just asked about every missing field.
 * **Baseline / wording** — `tmhc/rules/apexone_sep.yaml`. The header of
   the file documents every check type and placeholder (`{m.offline}`,
   `{f.some.fact}`, `{deployed}`).
-* **Template** — make one from any finished report:
+* **Template** — made from one of your finished reports, keeping its tables
+  row for row (wording, bold labels, merged cells, heading styles); only
+  the Deployed text and Status icon of each row are filled in:
   ```bash
-  python tools/make_template.py Finished_Report.docx tmhc/render/templates/my_template.docx \
+  python tools/make_template.py Finished_Report.docx tmhc/render/templates/sep_report_template.docx \
+      --rows tools/sep_row_map.yaml \
       --replace "Client Name Pvt Ltd=client_name" --replace "Client Policy=policy_name" \
       --replace "Q4 2026=quarter" --replace "28/10/2026=report_date" \
       --replace "07-10-2026=check_date" --replace "Analyst=prepared_by" \
       --replace "Approver=approved_by" --replace "Owner=account_owner"
   ```
-  The tool refuses to save if any of the original client strings survive.
-  Use it with `run --template my_template.docx`.
+  `tools/sep_row_map.yaml` says which setting each table row shows (by row
+  number). If you add, remove or reorder rows in your layout, update the
+  map. The tool refuses to save if any of the original client strings survive.
 * **Local model** — `options.local_model` in the profile (any Ollama vision model).
 
 ## Other products
