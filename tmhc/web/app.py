@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import re
+from collections import OrderedDict
 import secrets
 import shutil
 import time
@@ -38,9 +39,42 @@ HERE = Path(__file__).resolve().parent
 MAX_UPLOAD = 1024 * 1024 * 1024        # 1 GB per file
 SESSION_HOURS = 12
 COOKIE = "tmhc_session"
-EVIDENCE_EXT = {".docx", ".zip", ".csv", ".cmpolicy"}
-PRODUCTS = ["Standard Endpoint Protection"]
-BUILD_RE = re.compile(r"\d+\.\d+\.\d+(\.\d+)?")   # products with a rule pack; more as packs are added
+EVIDENCE_EXT = {".docx", ".zip", ".csv", ".cmpolicy", ".xml"}
+# products with a rule pack: tab id -> (product name, rule pack). More as packs are added.
+PRODUCT_INFO = OrderedDict([
+    ("SEP", {"name": "Standard Endpoint Protection", "rules": "apexone_sep"}),
+    ("SWP", {"name": "Server & Workload Protection", "rules": "swp"}),
+])
+PRODUCTS = [v["name"] for v in PRODUCT_INFO.values()]
+BUILD_RE = re.compile(r"\d+\.\d+\.\d+(\.\d+)?")
+# latest-build settings per product: (form/profile key, label, example)
+BUILD_FIELDS = {
+    "SEP": [("latest_agent_build", "Latest Apex One agent build", "14.0.20958")],
+    "SWP": [("latest_dsa_windows", "Latest Windows agent build", "20.0.3.29020"),
+            ("latest_dsa_linux", "Latest Linux agent build", "20.0.3.28120")],
+}
+
+
+def product_short(prof_or_name) -> str:
+    """'SEP' / 'SWP' from a profile dict or a product name."""
+    if isinstance(prof_or_name, dict):
+        rules = str((prof_or_name.get("options") or {}).get("rules", ""))
+        for k, v in PRODUCT_INFO.items():
+            if rules == v["rules"]:
+                return k
+        prof_or_name = prof_or_name.get("product", "")
+    for k, v in PRODUCT_INFO.items():
+        if str(prof_or_name).strip().lower() in (v["name"].lower(), k.lower()):
+            return k
+    return "SEP"
+
+
+def _check_builds(form: dict, short: str) -> Optional[str]:
+    for key, label, ex in BUILD_FIELDS[short]:
+        if not BUILD_RE.fullmatch(form.get(key, "").strip()):
+            return (f"Enter {label[0].lower() + label[1:]} (e.g. {ex}). Save it in Settings so it is filled in "
+                    "for every client.")
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -130,7 +164,7 @@ async def _save_upload(up: UploadFile, dest: Path) -> int:
     return size
 
 
-def _check_evidence(folder: Path, zip_password: str) -> list[str]:
+def _check_evidence(folder: Path, zip_password: str, short: str = "SEP") -> list[str]:
     """Quick look at what was uploaded, so problems show up immediately."""
     notes: list[str] = []
     ev = find_evidence(folder)
@@ -150,13 +184,26 @@ def _check_evidence(folder: Path, zip_password: str) -> list[str]:
                 enc = [i for i in z.infolist() if i.flag_bits & 0x1]
                 if enc:
                     z.read(enc[0], pwd=zip_password.encode() if zip_password else None)
-            pol = [n for n in names if n.lower().endswith(".cmpolicy")]
-            agents = [n for n in names if "agent list" in n.lower()]
             notes.append(f"ok: logs zip opened ({len(names)} files)")
-            notes.append(f"ok: policy export found ({Path(pol[0]).stem[:70]})" if pol else
-                         "warning: no .cmpolicy policy export in the zip - policy rows will be 'Not captured'")
-            notes.append("ok: Apex One agent list found" if agents else
-                         "warning: no 'Apex One Security Agent List' CSV - agent counts will be missing")
+            base = [Path(n).name.lower() for n in names]
+            if short == "SWP":
+                xml = [n for n in names if n.lower().endswith(".xml")]
+                notes.append("ok: Computers.csv found" if any(b.startswith("computers") and b.endswith(".csv")
+                                                             for b in base) else
+                             "warning: no Computers.csv - agent counts and module states will be missing")
+                notes.append(f"ok: {len(xml)} policy .xml export(s) found" if xml else
+                             "warning: no policy .xml export - only screenshots will be used for policy rows")
+                for label, key in (("Intrusion Prevention events", "intrusion_prevention"),
+                                   ("Log Inspection events", "log_inspection")):
+                    notes.append(f"ok: {label} found" if any(key in b for b in base) else
+                                 f"note: no {label} CSV - that presentation slide is left out")
+            else:
+                pol = [n for n in names if n.lower().endswith(".cmpolicy")]
+                agents = [n for n in names if "agent list" in n.lower()]
+                notes.append(f"ok: policy export found ({Path(pol[0]).stem[:70]})" if pol else
+                             "warning: no .cmpolicy policy export in the zip - policy rows will be 'Not captured'")
+                notes.append("ok: Apex One agent list found" if agents else
+                             "warning: no 'Apex One Security Agent List' CSV - agent counts will be missing")
         except RuntimeError:
             notes.append("problem: the logs zip did not open with the server's zip password (Settings)")
         except zipfile.BadZipFile:
@@ -169,9 +216,10 @@ def _check_evidence(folder: Path, zip_password: str) -> list[str]:
 def _profile_from_form(form: dict, cfg: dict, ev: dict, old: Optional[dict] = None) -> dict:
     d = cfg.get("defaults") or {}
     prof = dict(old or {})
+    short = product_short(form.get("product") or (old or {}).get("product") or "SEP")
     prof.update({
         "client_name": form["client_name"].strip(),
-        "product": form.get("product") or "Standard Endpoint Protection",
+        "product": PRODUCT_INFO[short]["name"],
         "quarter": form.get("quarter", "").strip() or "auto",
         "check_date": form.get("check_date", "").strip() or "auto",
         "report_date": form.get("report_date", "").strip() or dt.date.today().isoformat(),
@@ -181,14 +229,16 @@ def _profile_from_form(form: dict, cfg: dict, ev: dict, old: Optional[dict] = No
         "location": form.get("location", "").strip() or "Remotely",
         "customer_attendance": form.get("customer_attendance", "").strip() or "Console Access",
         "trend_attendance": form.get("trend_attendance", "").strip() or form.get("prepared_by", "").strip(),
-        "latest_agent_build": form.get("latest_agent_build", "").strip() or d.get("latest_agent_build", ""),
     })
+    for key, _, _ in BUILD_FIELDS[short]:
+        prof[key] = form.get(key, "").strip() or d.get(key, "")
     evidence = dict(prof.get("evidence") or {})
     evidence.update(ev)
     evidence["zip_password"] = d.get("zip_password", "")
     evidence.setdefault("checklist", "checklist.xlsx")
     prof["evidence"] = evidence
     prof["options"] = dict(old.get("options") if old and old.get("options") else (cfg.get("options") or {"reader": "ocr"}))
+    prof["options"]["rules"] = PRODUCT_INFO[short]["rules"]
     return prof
 
 
@@ -208,7 +258,9 @@ def _outputs(folder: Path) -> dict:
     reports = sorted(out.glob("*.docx"), key=lambda p: p.stat().st_mtime) if out.is_dir() else []
     report = reports[-1] if reports else None
     review = report.with_name(report.stem + "_review.xlsx") if report else None
+    decks = sorted(out.glob("*.pptx"), key=lambda p: p.stat().st_mtime) if out.is_dir() else []
     return {"report": report, "review": review if review and review.exists() else None,
+            "presentation": decks[-1] if decks else None,
             "checklist": folder / "checklist.xlsx" if (folder / "checklist.xlsx").exists() else None}
 
 
@@ -285,35 +337,44 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
 
     # ---------------- client list ------------------------------------------
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request):
+    def index(request: Request, tab: str = "SEP"):
         c = cfg()
+        tab = tab.upper() if tab.upper() in PRODUCT_INFO else "SEP"
         state = _load_state(c["inbox"])
         rows = []
+        counts = {k: 0 for k in PRODUCT_INFO}
         for folder in sorted((p for p in c["inbox"].iterdir() if p.is_dir() and not p.name.startswith((".", "_"))),
                              key=lambda p: p.stat().st_mtime, reverse=True):
             prof = _read_profile(folder)
+            short = product_short(prof)
+            counts[short] += 1
+            if short != tab:
+                continue
             st = client_status(folder, state)
             rows.append({"name": folder.name, "client": prof.get("client_name", folder.name),
                          "prepared_by": prof.get("prepared_by", ""), "check_date": prof.get("check_date", ""),
                          "status": st["status"], "detail": st["detail"],
                          "updated": _fmt_time(folder.stat().st_mtime), "outputs": _outputs(folder)})
         busy = any(r["status"] in ("queued", "building") for r in rows)
-        return render(request, "index.html", rows=rows, busy=busy)
+        return render(request, "index.html", rows=rows, busy=busy, tab=tab, tabs=PRODUCT_INFO, counts=counts)
 
     # ---------------- new client --------------------------------------------
     @app.get("/new", response_class=HTMLResponse)
-    def new_page(request: Request):
+    def new_page(request: Request, product: str = "SEP"):
         c = cfg()
         d = c.get("defaults") or {}
-        form = {"product": d.get("product", PRODUCTS[0]), "prepared_by": d.get("prepared_by", ""),
+        short = product_short(product)
+        form = {"product": PRODUCT_INFO[short]["name"], "prepared_by": d.get("prepared_by", ""),
                 "approved_by": d.get("approved_by", ""), "account_owner": d.get("account_owner", ""),
                 "location": d.get("location", "Remotely"),
                 "customer_attendance": d.get("customer_attendance", "Console Access"),
                 "trend_attendance": d.get("trend_attendance", d.get("prepared_by", "")),
-                "latest_agent_build": d.get("latest_agent_build", ""),
                 "report_date": dt.date.today().isoformat()}
-        return render(request, "new.html", form=form, products=PRODUCTS, error=None,
-                      has_zip_password=bool(d.get("zip_password")))
+        for fields in BUILD_FIELDS.values():
+            for key, _, _ in fields:
+                form[key] = d.get(key, "")
+        return render(request, "new.html", form=form, products=PRODUCTS, error=None, build_fields=BUILD_FIELDS,
+                      short=short, info=PRODUCT_INFO, has_zip_password=bool(d.get("zip_password")))
 
     @app.post("/new")
     async def new_client(request: Request, screenshots_docx: Optional[UploadFile] = File(None),
@@ -324,15 +385,17 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         name = safe_name(form.get("client_name", ""))
         d = c.get("defaults") or {}
 
+        short = product_short(form.get("product", "SEP"))
+
         def fail(msg: str):
-            return render(request, "new.html", form=form, products=PRODUCTS, error=msg,
-                          has_zip_password=bool(d.get("zip_password")))
+            return render(request, "new.html", form=form, products=PRODUCTS, error=msg, build_fields=BUILD_FIELDS,
+                          short=short, info=PRODUCT_INFO, has_zip_password=bool(d.get("zip_password")))
 
         if not name:
             return fail("Enter the client name.")
-        if not BUILD_RE.fullmatch(form.get("latest_agent_build", "").strip()):
-            return fail("Enter Trend's latest Apex One agent build (e.g. 14.0.20958). "
-                        "Save it in Settings so it is filled in for every client.")
+        err = _check_builds(form, short)
+        if err:
+            return fail(err)
         if (c["inbox"] / name).exists():
             return fail(f"A client folder '{name}' already exists - open it from the list to replace its evidence.")
         uploads = [u for u in [screenshots_docx, logs_zip, *extra] if u is not None and u.filename]
@@ -340,7 +403,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             return fail("Upload at least the screenshots Word file or the logs zip.")
         for u in uploads:
             if Path(u.filename).suffix.lower() not in EVIDENCE_EXT:
-                return fail(f"{u.filename}: only .docx, .zip, .csv and .cmpolicy files are accepted.")
+                return fail(f"{u.filename}: only .docx, .zip, .csv, .cmpolicy and .xml files are accepted.")
         if screenshots_docx and screenshots_docx.filename and not screenshots_docx.filename.lower().endswith(".docx"):
             return fail("The screenshots file must be a Word .docx file.")
         if logs_zip and logs_zip.filename and not logs_zip.filename.lower().endswith(".zip"):
@@ -353,7 +416,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                 await _save_upload(u, staging / Path(u.filename).name)
             ev = find_evidence(staging)
             _write_profile(staging, _profile_from_form(form, c, ev))
-            notes = _check_evidence(staging, d.get("zip_password", ""))
+            notes = _check_evidence(staging, d.get("zip_password", ""), short)
             try:            # checklist straight away, so blanks can be filled while it builds
                 make_checklist(staging / "profile.yaml", sync=True, quiet=True)
             except (SystemExit, Exception) as exc:
@@ -381,6 +444,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         return render(request, "client.html", name=name, prof=prof, st=st, status_txt=status_txt,
                       pending=len(pending),
                       checks=checks, files=files, outputs=_outputs(folder), products=PRODUCTS,
+                      build_fields=BUILD_FIELDS, short=product_short(prof), info=PRODUCT_INFO,
                       has_zip_password=bool((c.get("defaults") or {}).get("zip_password")))
 
     @app.post("/client/{name}/details")
@@ -416,7 +480,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         prof = _read_profile(folder)
         prof.setdefault("evidence", {}).update(find_evidence(folder))
         _write_profile(folder, prof)
-        notes = _check_evidence(folder, (c.get("defaults") or {}).get("zip_password", ""))
+        notes = _check_evidence(folder, (c.get("defaults") or {}).get("zip_password", ""), product_short(_read_profile(folder)))
         (folder / ".upload_check.json").write_text(json.dumps(notes), encoding="utf-8")
         return RedirectResponse(f"/client/{name}", status_code=303)
 
@@ -442,11 +506,11 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     def download(name: str, kind: str):
         folder = _client_dir(cfg(), name)
         path = _outputs(folder).get(kind)
-        if kind not in ("report", "review", "checklist") or path is None or not path.exists():
+        if kind not in ("report", "review", "checklist", "presentation") or path is None or not path.exists():
             raise HTTPException(404, "not available yet")
-        media = ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                 if path.suffix == ".docx" else
-                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        media = {".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                 ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}.get(
+            path.suffix, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         return FileResponse(path, media_type=media, filename=path.name)
 
     # ---------------- checklist in the browser ------------------------------
@@ -525,7 +589,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     def settings_page(request: Request, saved: int = 0):
         c = cfg()
         return render(request, "settings.html", d=c.get("defaults") or {}, o=c.get("options") or {},
-                      products=PRODUCTS, saved=saved, users=sorted((c.get("web") or {}).get("users", {})))
+                      products=PRODUCTS, saved=saved, build_fields=BUILD_FIELDS, info=PRODUCT_INFO, users=sorted((c.get("web") or {}).get("users", {})))
 
     @app.post("/settings")
     async def settings_save(request: Request):
@@ -536,12 +600,14 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                   "customer_attendance", "trend_attendance"):
             if k in form:
                 d[k] = form[k].strip()
-        build = form.get("latest_agent_build", "").strip()
-        if build and not BUILD_RE.fullmatch(build):
-            raise HTTPException(400, "latest agent build must look like 14.0.20958")
-        if "latest_agent_build" in form and build != d.get("latest_agent_build", ""):
-            d["latest_agent_build"] = build
-            d["latest_agent_build_updated"] = dt.date.today().isoformat() if build else ""
+        for fields in BUILD_FIELDS.values():
+            for key, label, ex in fields:
+                build = form.get(key, "").strip()
+                if build and not BUILD_RE.fullmatch(build):
+                    raise HTTPException(400, f"{label} must look like {ex}")
+                if key in form and build != d.get(key, ""):
+                    d[key] = build
+                    d[key + "_updated"] = dt.date.today().isoformat() if build else ""
         if form.get("zip_password"):                   # blank = keep the current one
             d["zip_password"] = form["zip_password"]
         if form.get("clear_zip_password") == "1":

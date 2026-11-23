@@ -9,7 +9,8 @@ description = "Trend Micro health-check report generator"
 requires-python = ">=3.10"
 dependencies = ["python-docx>=1.1", "PyYAML>=6.0", "openpyxl>=3.1", "numpy>=1.26",
                 "opencv-python-headless>=4.8", "pytesseract>=0.3.10", "rapidfuzz>=3.0",
-                "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9", "jinja2>=3.1"]
+                "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9", "jinja2>=3.1",
+                "python-pptx>=1.0", "matplotlib>=3.7", "lxml>=5.0", "Pillow>=10.0"]
 
 [project.optional-dependencies]
 cloud = ["anthropic>=0.40"]
@@ -21,4 +22,4 @@ tmhc = "tmhc.cli:main"
 include = ["tmhc*"]
 
 [tool.setuptools.package-data]
-tmhc = ["rules/*.yaml", "render/assets/*.png", "render/templates/*.docx", "web/templates/*.html", "web/static/*"]
+tmhc = ["rules/*.yaml", "render/assets/*.png", "render/templates/*.docx", "render/templates/*.pptx", "web/templates/*.html", "web/static/*"]

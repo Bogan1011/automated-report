@@ -1,15 +1,19 @@
 # Trend Micro Health Check Report Generator
 
 Turns the evidence you collect in a customer health-check session into the
-finished Word report — same template, same tables, same status icons, same
-gap and remediation wording — so the analyst reviews a draft instead of
-typing one.
+finished Word report **and the Product Efficacy presentation** — same
+templates, same tables, same status icons, same gap and remediation wording
+— so the analyst reviews a draft instead of typing one.
 
-Built and validated against a real Standard Endpoint Protection (Apex One)
-engagement: from that evidence pack it reproduced the analyst's report with
-the same 11 server-side gaps and 8 policy gaps, and identical counts
-(deployed, online/offline, build spread, restart-required, stale patterns,
-server-OS agents).
+Products:
+
+| Product | Word report | Presentation | Validated against |
+|---|---|---|---|
+| Standard Endpoint Protection (Apex One) — tab **SEP** | yes | yes (19-slide efficacy deck) | real engagement: same 11 server + 8 policy gaps, identical counts |
+| Server & Workload Protection (Vision One SWP) — tab **SWP** | yes | yes (12-slide efficacy deck) | real engagement: every row, status icon and gap identical to the analyst's report |
+
+SEP and SWP are kept as separate tabs on the website and separate reports;
+they can be merged later.
 
 **Runs entirely on your own machine.** The report, the evidence and the
 screenshots stay on that machine. Nothing is uploaded unless you deliberately
@@ -144,7 +148,8 @@ In `clients/Acme/output/`:
 
 | File | Purpose |
 |---|---|
-| `Acme_SEP_Health_Check_Report_<Mon>_<Year>.docx` | the client report - open in Word and accept the prompt to update the table of contents |
+| `Acme_SEP_Health_Check_Report_<Mon>_<Year>.docx` | the client report - open in Word and accept the prompt to update the table of contents (`..._SWP_...` for Server & Workload Protection) |
+| `Acme_SEP_Product_Efficacy_Report_<Mon>_<Year>.pptx` | the efficacy presentation: executive summary, agent versions, one chart slide per detection type, findings. Charts are native PowerPoint charts (editable). **The client logo on the title slide is a grey placeholder - right-click it > Change Picture.** |
 | `..._review.xlsx` | every row with its source and evidence, the gap list, and a **Not captured** sheet |
 
 ### Reviewing and correcting
@@ -169,7 +174,30 @@ The more that comes from exports, the less is read off pictures.
 | Detection logs, scan-exclusion lists (CSV) | SEP › Logs & Reports, policy exclusion lists | narrative counts, exclusion review |
 | Screenshot Word file, one short label line above each group of pictures | Teams session | everything else |
 
-Screenshots to make sure you take (no export exists for these):
+For **Server & Workload Protection** the logs zip should hold:
+
+| Export | Where | Feeds |
+|---|---|---|
+| `Computers.csv` | SWP › Computers › Export (CSV) | agent counts, status (critical/warning/managed with reasons), agent versions, component update status, computers without policy, module states per policy |
+| Policy exports (`.xml`), one per reviewed policy | SWP › Policies › select › Export | self protection, CPU usage, rule counts, real-time scan configuration (only values set on the policy itself; inherited ones come from screenshots) |
+| `Intrusion_Prevention_Events.csv`, `Log_Inspection_Events.csv` | SWP › Events & Reports › Export | the IPS and Log Inspection presentation slides |
+| `Directory_Lists.csv`, `File_Lists.csv`, `File_Extension_Lists.csv` | SWP › Policies › Common Objects › Export | exclusion review |
+
+SWP screenshots (labels like `Setting windows`, `Am linux`, `Default realtime`
+help, but the policy is recognised from the window title too): License,
+MFA, Endpoint Inventory Global Settings, Version Control Policies (Version
+details), Administration › System Settings tabs (Agents, Alerts, Event
+Forwarding, Updates, Smart Feedback, Advanced), Scheduled Tasks, Relay
+Management, and for each reviewed policy: Overview, Anti-Malware, Web
+Reputation, Device Control, Application Control, Integrity Monitoring, Log
+Inspection, Firewall, Intrusion Prevention, Settings (all tabs); plus the
+Default Real-Time / Scheduled / Manual scan configurations. The SWP console's
+dark grey dropdown text is read with a contrast-stretched OCR pass.
+
+The latest agent builds (Apex One; SWP Windows and Linux) are set once in
+**Settings** and asked for on every new health check.
+
+Screenshots to make sure you take for SEP (no export exists for these):
 **License Information**, Apex One **Global Agent Settings** (all tabs),
 **Agent Update Source / Automatic Updates**, **Smart Protection Sources/Network**,
 **Suspicious Object List Settings**, SEP **Scheduled Update**,
@@ -202,11 +230,20 @@ just asked about every missing field.
   map. The tool refuses to save if any of the original client strings survive.
 * **Local model** — `options.local_model` in the profile (any Ollama vision model).
 
+* **Presentation templates** — made from one of your finished efficacy decks:
+  ```bash
+  python tools/make_pptx_template.py Finished_SWP_Deck.pptx tmhc/render/templates/swp_efficacy_template.pptx \
+      --product swp --forbid "Client Name" --forbid HOSTPREFIX
+  ```
+  Keeps one prototype of each slide design, replaces the client logo with a
+  placeholder, drops revision history, and refuses to save if a `--forbid`
+  word survives.
+
 ## Other products
 
 The pipeline is product-neutral; a product needs a rule pack, a template
-and (ideally) an export parser. Server & Workload Protection, Cloud Email
-Gateway and Cloud Email & Collaboration Protection follow the same pattern:
+and (ideally) an export parser. SEP and SWP are done. Cloud Email Gateway
+and Cloud Email & Collaboration Protection follow the same pattern:
 add `tmhc/rules/<product>.yaml`, a template made from one of your finished
 reports with `tools/make_template.py`, and an export parser in
 `tmhc/sources/` where the console offers one (for example a Server &

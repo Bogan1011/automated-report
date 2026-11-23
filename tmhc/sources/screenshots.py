@@ -200,7 +200,7 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
     def add(rule: dict, prefix: Optional[str] = None, block: Optional[str] = None,
             heading: str = "") -> None:
         key = rule.get("key")
-        if not key or key == "_always" or key.startswith("inventory.") or key.startswith("logs."):
+        if not key or key == "_always" or key.startswith(("inventory.", "logs.", "swp.inventory.")):
             return
         if prefix:
             key = key.replace("{p}", prefix)
@@ -222,11 +222,17 @@ def field_catalogue(rules: dict) -> dict[str, dict]:
                     "recommended": rule.get("recommended", "")
                                    if not rule.get("sub") else f"{rule['sub']}: {rule.get('recommended', '')}"}
 
+    pol = rules.get("policy", {})
     for section in ("server", "policy"):
+        if section == "policy" and pol.get("scopes"):
+            for sc in pol["scopes"]:          # one block of rows per reviewed policy
+                for g in pol.get("groups", []):
+                    for r in g.get("rows", []):
+                        add(r, sc["id"], f"{sc.get('default_name', sc['id'])} - {g.get('heading', '').replace('{name}', '').strip(' –-')}")
+            continue
         for g in rules.get(section, {}).get("groups", []) + rules.get(section, {}).get("tail_groups", []):
             for r in g.get("rows", []):
                 add(r, heading=g.get("heading", ""))
-    pol = rules.get("policy", {})
     for b in pol.get("scan_blocks", []):
         for t in pol.get("scan_template", []):
             if "only" in t and b["prefix"] not in t["only"]:

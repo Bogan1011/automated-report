@@ -37,3 +37,7 @@ pre{background:#f3f4f6;border-radius:8px;padding:12px;white-space:pre-wrap;font-
 @keyframes s{to{transform:rotate(360deg)}}
 .login{max-width:380px;margin:80px auto}
 details summary{cursor:pointer;font-weight:600}
+.tabs{display:flex;gap:6px;margin:0 0 12px;border-bottom:2px solid #e5e5e5}
+.tab{padding:9px 16px;border-radius:8px 8px 0 0;color:#444;text-decoration:none;font-weight:600;margin-bottom:-2px;border-bottom:2px solid transparent}
+.tab.on{color:#c00000;border-bottom-color:#c00000;background:#fff}
+.tab .count{display:inline-block;min-width:20px;padding:0 6px;border-radius:10px;background:#eee;font-size:12px;text-align:center;margin-left:4px}

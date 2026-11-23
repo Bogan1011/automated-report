@@ -94,7 +94,7 @@ def _is_ours(p: Path) -> bool:
 def find_evidence(folder: Path) -> dict:
     docs = [p for p in folder.glob("*.docx") if not _is_ours(p)]
     zips = [p for p in folder.glob("*.zip") if not _is_ours(p)]
-    pols = list(folder.glob("*.cmpolicy"))
+    pols = list(folder.glob("*.cmpolicy")) + list(folder.glob("*.xml"))
     csvs = list(folder.glob("*.csv"))
     ev = {}
     if docs:

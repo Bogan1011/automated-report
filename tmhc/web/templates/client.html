@@ -6,6 +6,7 @@
 <span class="pill {{ st.status }}">{% if st.status in ('building','queued') %}<span class="spin"></span>{% endif %}{{ st.status }}</span> <span class="muted">{{ st.detail }}</span></div>
 <div class="actions" style="margin:0">
 {% if outputs.report %}<a class="btn" href="/client/{{ name|urlencode }}/download/report">Download report</a>{% endif %}
+{% if outputs.presentation %}<a class="btn" href="/client/{{ name|urlencode }}/download/presentation">Download presentation</a>{% endif %}
 {% if outputs.review %}<a class="btn ghost" href="/client/{{ name|urlencode }}/download/review">Review workbook</a>{% endif %}
 {% if outputs.checklist %}<a class="btn ghost" href="/client/{{ name|urlencode }}/checklist">Fill in settings</a>{% endif %}
 </div></div>
