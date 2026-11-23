@@ -1,0 +1,22 @@
+# Health-check watcher settings
+inbox: ~/healthcheck/inbox
+poll_seconds: 20          # how often to look for new or changed folders
+settle_seconds: 30        # wait until files have not changed for this long
+
+# Used for every new client folder (each folder gets its own profile.yaml,
+# which you can edit afterwards).
+defaults:
+  product: Standard Endpoint Protection
+  prepared_by: Your Name
+  approved_by: Approver Name
+  account_owner: Account Owner
+  location: Remotely
+  customer_attendance: Console Access
+  trend_attendance: Your Name
+  zip_password: ""        # the password your log zips usually use
+
+options:
+  rules: apexone_sep
+  reader: ocr             # ocr | ocr+local | none   (all local; see README)
+  stale_pattern_releases: 12
+  min_confidence: 0.6

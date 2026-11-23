@@ -27,7 +27,7 @@ from .engine.evaluate import evaluate, load_rules, status_counts
 from .models import Fact, HealthCheck, Source
 from .render.docx_report import DEFAULT_TEMPLATE, render
 from .render.review import write_review
-from .sources import agentlist, policy, screenshots, v1logs
+from .sources import agentlist, ocr, policy, screenshots, v1logs
 
 STARTER_PROFILE = """\
 # Client profile for one health check. Paths are relative to this file.
@@ -56,10 +56,12 @@ options:
   skip_covered: true               # don't read screenshots for settings the exports prove
 
   # How screenshots are read. Nothing leaves this machine unless you choose 'cloud'.
-  #   none  - don't read screenshots; use the checklist (works on any laptop)
-  #   local - vision model in Ollama on this machine (needs a decent GPU)
-  #   cloud - Anthropic API; ALSO needs allow_cloud: true
-  reader: none
+  #   ocr       - text recognition + checkbox detection (default; fast, no AI, no GPU)
+  #   ocr+local - ocr first, then a local AI model (Ollama) for what ocr missed
+  #   none      - don't read screenshots; use the checklist only
+  #   local     - local AI model only
+  #   cloud     - Anthropic API; ALSO needs allow_cloud: true
+  reader: ocr
   local_model: qwen2.5vl:7b        # qwen2.5vl:3b for smaller GPUs
   ollama_host: http://127.0.0.1:11434
   allow_cloud: false
@@ -117,7 +119,9 @@ def _new_healthcheck(prof: dict) -> tuple[HealthCheck, dt.date]:
     check = _date(prof.get("check_date"))
     report = _date(prof.get("report_date")) or dt.date.today()
     hc = HealthCheck(
-        client_name=prof.get("client_name", ""), quarter=str(prof.get("quarter", "")),
+        client_name=prof.get("client_name", ""),
+        quarter=(f"Q{(check.month - 1) // 3 + 1} {check.year}" if check and str(prof.get("quarter")) in ("auto", "", "None")
+                 else str(prof.get("quarter", ""))),
         prepared_by=prof.get("prepared_by", ""), approved_by=prof.get("approved_by", ""),
         account_owner=prof.get("account_owner", ""), location=prof.get("location", "Remotely"),
         attendees_customer=prof.get("customer_attendance", "Console Access"),
@@ -191,15 +195,24 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
     # ---- screenshots -------------------------------------------------------
     out_dir = out_dir or (base / "output")
     cache_path = base / "screenshot_cache.json"
-    reader_kind = str(opts.get("reader", "none")).lower()
+    reader_kind = str(opts.get("reader", "ocr")).lower()
     min_conf = float(opts.get("min_confidence", 0.6))
-    if ev.get("screenshots_docx") and reader_kind != "none" and not offline:
-        _require(base / ev["screenshots_docx"], "evidence: screenshots_docx")
-        covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
-        reader = screenshots.make_reader(opts)
-        screenshots.run(base / ev["screenshots_docx"], rules, cache_path, covered_keys=covered,
-                        reader=reader, skip_covered=bool(opts.get("skip_covered", True)),
-                        dry_run=dry_run, progress=say)
+    shots_docx = base / ev["screenshots_docx"] if ev.get("screenshots_docx") else None
+    if shots_docx and reader_kind != "none" and not offline:
+        _require(shots_docx, "evidence: screenshots_docx")
+        if reader_kind.startswith("ocr"):
+            if dry_run:
+                say(f"would OCR every screenshot in {shots_docx.name}")
+            else:
+                ocr.run(shots_docx, cache_path, opts.get("rules", "apexone_sep"), progress=say)
+        model_kind = reader_kind.split("+")[-1] if "+" in reader_kind else (
+            reader_kind if reader_kind in ("local", "cloud") else None)
+        if model_kind:
+            covered = {k for k, f in hc.facts.items() if f.source != Source.SCREENSHOT}
+            covered |= {f.key for f in screenshots.ShotCache(cache_path).facts(min_conf)}
+            screenshots.run(shots_docx, rules, cache_path, covered_keys=covered,
+                            reader=screenshots.make_reader(dict(opts, reader=model_kind)),
+                            skip_covered=True, dry_run=dry_run, progress=say)
         if dry_run:
             return hc
     cache_facts = screenshots.ShotCache(cache_path).facts(min_conf)
@@ -238,6 +251,10 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
 
 
 def main(argv=None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["watch"]:
+        from .watch import main as watch_main
+        return watch_main(argv[1:])
     ap = argparse.ArgumentParser(prog="tmhc", description="Trend Micro health-check report generator")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_init = sub.add_parser("init", help="write a starter client profile")
@@ -252,6 +269,7 @@ def main(argv=None) -> None:
                        help="don't read any new screenshots; use cache, checklist and exports only")
     p_run.add_argument("--dry-run", action="store_true", help="list screenshots that would be read, then stop")
     p_run.add_argument("--template", type=Path, help="alternative Word template")
+    sub.add_parser("watch", help="watch an inbox folder and build reports automatically (see tmhc/watch.py)")
     a = ap.parse_args(argv)
 
     try:

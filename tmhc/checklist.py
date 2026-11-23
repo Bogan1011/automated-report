@@ -26,8 +26,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from .models import Fact, Source
 
 SHEET = "Checklist"
-HEADERS = ["Key", "Section", "Setting", "Trend recommended", "Deployed", "Notes", "Where in console"]
-COL_KEY, COL_DEPLOYED, COL_NOTES = 1, 5, 6
+HEADERS = ["Key", "Section", "Setting", "Trend recommended", "Deployed", "Notes", "Where in console",
+           "Prefilled"]
+COL_KEY, COL_DEPLOYED, COL_NOTES, COL_PREFILLED = 1, 5, 6, 8
 
 BOOL_CHOICES = ["Enabled", "Disabled", "Not Configured", "N/A"]
 DESKTOP_SERVER_CHOICES = [
@@ -92,7 +93,8 @@ def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
         spec = catalogue[k]
         pre = prefill.get(k)
         ws.append([k, spec.get("section", ""), spec.get("setting", ""), spec.get("recommended", ""),
-                   pre.display if pre else "", f"from {pre.source.value}" if pre else "", where(k)])
+                   pre.display if pre else "", "read from screenshot - check" if pre else "", where(k),
+                   pre.display if pre else ""])
         r = ws.max_row
         cell = ws.cell(row=r, column=COL_DEPLOYED)
         cell.fill = yellow
@@ -107,9 +109,10 @@ def write(path: str | Path, catalogue: dict[str, dict], covered: Iterable[str],
         elif typ == "int":
             ws.cell(row=r, column=COL_NOTES).value = ws.cell(row=r, column=COL_NOTES).value or "number"
 
-    for i, w in enumerate([34, 30, 45, 45, 30, 22, 55], 1):
+    for i, w in enumerate([34, 30, 45, 45, 30, 24, 55, 10], 1):
         ws.column_dimensions[chr(64 + i)].width = w
     ws.column_dimensions["A"].hidden = True
+    ws.column_dimensions["H"].hidden = True
     for row in ws.iter_rows(min_row=2):
         for c in row:
             c.alignment = Alignment(wrap_text=True, vertical="top")
@@ -169,6 +172,9 @@ def read(path: str | Path, catalogue: dict[str, dict]) -> list[Fact]:
         if not key or deployed is None or str(deployed).strip() == "":
             continue
         display = deployed.strftime("%Y-%m-%d") if hasattr(deployed, "strftime") else str(deployed).strip()
+        prefilled = row[COL_PREFILLED - 1] if len(row) >= COL_PREFILLED else None
+        if prefilled is not None and str(prefilled).strip() == display:
+            continue          # untouched screenshot reading: keep it as screenshot evidence
         typ = catalogue.get(key, {}).get("type", "text")
         note = row[COL_NOTES - 1]
         value = _value_for(display, typ)
@@ -178,7 +184,7 @@ def read(path: str | Path, catalogue: dict[str, dict]) -> list[Fact]:
                 display = _dt.date.fromisoformat(display[:10]).strftime("%d %B %Y")
             except ValueError:
                 pass
-        facts.append(Fact(key=key, value=value, display=display,
-                          source=Source.MANUAL,
-                          evidence=f"checklist{(': ' + str(note)) if note else ''}"))
+        evidence = (f"checklist (corrected screenshot reading {prefilled!r})" if prefilled
+                    else f"checklist{(': ' + str(note)) if note else ''}")
+        facts.append(Fact(key=key, value=value, display=display, source=Source.MANUAL, evidence=evidence))
     return facts

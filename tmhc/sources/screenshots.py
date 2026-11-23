@@ -447,7 +447,8 @@ def make_reader(opts: dict):
     if kind == "local":
         return LocalReader(model=opts.get("local_model", DEFAULT_LOCAL_MODEL),
                            host=opts.get("ollama_host", DEFAULT_LOCAL_HOST),
-                           allow_remote_host=bool(opts.get("allow_remote_host", False)))
+                           allow_remote_host=bool(opts.get("allow_remote_host", False)),
+                           timeout=int(opts.get("local_timeout", 600)))
     if kind == "cloud":
         return CloudReader(model=opts.get("cloud_model", DEFAULT_CLOUD_MODEL),
                            allow_cloud=bool(opts.get("allow_cloud", False)))

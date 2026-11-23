@@ -12,87 +12,106 @@ the same 11 server-side gaps and 8 policy gaps, and identical counts
 server-OS agents).
 
 **Runs entirely on your own machine.** The report, the evidence and the
-screenshots stay on the laptop. Nothing is uploaded unless you deliberately
+screenshots stay on that machine. Nothing is uploaded unless you deliberately
 switch on the cloud reader for a client that has approved it.
 
 ```
- evidence pack (on your laptop)          facts            report (on your laptop)
- ─────────────────────────────           ─────            ───────────────────────
- .cmpolicy policy export    ──parse──┐
- Agent List CSV             ──parse──┤
- Vision One log exports     ──parse──┼──► rules ──┬─► Word report (.docx)
- checklist.xlsx (you fill)  ─────────┤            └─► review workbook (.xlsx)
- screenshots (optional)  ─local model┘
+ drop into inbox/<Client>/            read locally                 written to <Client>/output/
+ ─────────────────────────            ────────────                 ───────────────────────────
+ screenshots .docx  ──── OCR + checkbox/radio/toggle detection ─┐
+ logs .zip  ─────────── policy export, agent list, log CSVs ────┼─► rules ─► Word report + review workbook
+ checklist.xlsx (fill blanks, save) ────────────────────────────┘           STATUS.txt (what to do next)
 ```
+
+## How screenshots are read
+
+Plain OCR (Tesseract) finds each setting's label, and the checkbox, radio
+button or toggle next to it is judged from its pixels: filled blue or a
+dark tick/dot means on, an empty box or ring means off. Numbers in input
+boxes are read twice, in two different ways, and kept only if both
+readings agree. No AI model and no GPU are needed, and it takes about 1.5 s
+per screenshot on 2 vCPU.
+
+Measured on a real engagement (119 screenshots, values checked by hand):
+**35 settings read correctly, 0 wrong, 12 left blank** for the checklist.
+It is built to leave a value blank rather than guess. Settings without a
+readable label or control (and anything not in the screenshots) show as
+*Not captured* in the report and appear in `checklist.xlsx` to fill in.
 
 ## Why it is built this way
 
 * **Exports first.** The `.cmpolicy` policy export contains every policy
   setting exactly, so ~150 policy rows need no screenshot at all. The
   agent-list CSV gives every count.
-* **About 40 settings have no export** (licence, Apex One global agent
-  settings, update schedule, syslog, AD, notifications...). You capture
-  those one of two ways, both local:
-  * **Checklist (no AI, any laptop)** - an Excel sheet listing just those
-    settings with dropdowns and where to find each one in the console.
-    Fill it during the Teams session.
-  * **Local vision model (needs a GPU)** - an AI model running in Ollama on
-    your own PC reads the screenshot Word file.
+* **Screenshots for the rest** (licence, Apex One global agent settings,
+  update schedule, syslog, AD, notifications...), read by OCR as above.
+* **Checklist for whatever is left** - an Excel sheet pre-filled with what
+  the screenshots showed; you fill the blanks and save.
 * **Never invents a value.** A setting with no evidence shows as
   *Not captured* with the Unknown icon and raises no gap.
 * **Baseline is data, not code** - `tmhc/rules/apexone_sep.yaml` holds every
-  row, its Trend-recommended value, the check and the remediation sentence.
-* **Your own template** - made from one of your finished reports, so the
-  cover, styles, intro and links are exactly yours.
+  row, its Trend-recommended value, the check and the remediation sentence;
+  `tmhc/rules/apexone_sep_ocr.yaml` says where each setting is on screen.
+* **Your own template** - made from one of your finished reports.
 
-## Set up on a Windows laptop (once)
+## Ubuntu VM (recommended): drop files, get a report
 
-1. Install **Python 3.11+** from python.org (tick *Add python.exe to PATH*).
-2. Download this repository (Code > Download ZIP, or `git clone`) and open a
-   terminal in its folder.
-3. `pip install -r requirements.txt`
-4. Check it works: `python -m pytest -q`
-
-No account, key or internet connection is needed after this.
-
-## Run a health check
+Tested on Ubuntu 24.04 with 2 vCPU / 8 GB RAM.
 
 ```bash
-python -m tmhc init clients/Acme/profile.yaml
-```
-This creates the client folder. Put the evidence in `clients/Acme/evidence/`:
-
-```
-clients/Acme/
-  profile.yaml                  <- client name, dates, your name
-  evidence/
-    Acme_SEP_SS.docx            <- all screenshots in one Word file
-    Acme_SEP_Logs.zip           <- CSV + .cmpolicy exports
+git clone https://github.com/Bogan1011/automated-report.git
+cd automated-report
+./deploy/install.sh --samba
 ```
 
-### Office laptop (no GPU) - checklist
+The installer asks for the names printed in every report and the usual
+logs-zip password, then sets up a background service (`tmhc-watch`) and a
+Windows share. Set the share password when asked (or later with
+`sudo smbpasswd -a $USER`).
 
-```bash
-python -m tmhc checklist clients/Acme/profile.yaml   # creates clients/Acme/checklist.xlsx
-# fill the yellow "Deployed" column (during or after the session)
-python -m tmhc run clients/Acme/profile.yaml         # builds the report
-```
-The checklist only lists what the exports don't already prove (about 40
-rows for an Apex One / SEP check). Blank rows show as *Not captured*.
+**Every health check after that:**
 
-### PC with a GPU - local AI reads the screenshots
+1. From Windows open `\\<vm-ip>\healthcheck\inbox`, make a folder named after
+   the client (e.g. `Acme Industries Private Limited`) and copy in the
+   screenshot Word file and the logs zip.
+2. Wait ~4 minutes. The folder gets `output/` (the report + review
+   workbook), `STATUS.txt`, `profile.yaml` and `checklist.xlsx`.
+3. Open `checklist.xlsx`, fill any blank yellow cells, save. The report
+   rebuilds by itself within a minute.
+4. Open the report in Word and accept the prompt to update the table of
+   contents.
 
-1. Install **Ollama** from ollama.com and run `ollama pull qwen2.5vl:7b`
-   (about 6 GB, one-time). On a GPU with less than 8 GB use `qwen2.5vl:3b`.
-2. In `profile.yaml` set `reader: local`.
-3. `python -m tmhc run clients/Acme/profile.yaml`
+The check date and quarter are read from the screenshots' taskbar clock.
+To change anything for one client (legal name, dates, people), edit that
+folder's `profile.yaml`; saving it rebuilds the report.
 
-The model only answers on `127.0.0.1`; the tool refuses any other address.
-Then run `python -m tmhc checklist ...` to confirm or fill whatever the
-model missed - its readings are pre-filled in the checklist for you to check.
+| | |
+|---|---|
+| Settings for all clients | `~/healthcheck/config.yaml` |
+| Live log | `journalctl -u tmhc-watch -f` |
+| Update | `cd ~/automated-report && git pull && ./deploy/install.sh` |
+| No Samba? | copy files with WinSCP / `scp` into `~/healthcheck/inbox/<Client>/` |
 
-Without a GPU the local model still works but is slow (minutes per
-screenshot); the checklist is quicker.
+**Optional local AI (`--with-ai`).** Installs Ollama with `qwen2.5vl:3b`
+(CPU, ~3 GB) and adds 4 GB swap; the AI then reads only what OCR could not.
+On 2 vCPU expect a few minutes per screenshot. This path has not been
+measured against real captures, so its readings must be checked in the
+review workbook. OCR plus the checklist is the dependable route.
+
+## Windows laptop (manual runs)
+
+1. Install **Python 3.11+** from python.org (tick *Add python.exe to PATH*)
+   and **Tesseract** from github.com/UB-Mannheim/tesseract/wiki (add to PATH).
+2. In the repository folder: `pip install -r requirements.txt`, then
+   `python -m pytest -q`.
+3. Per client:
+   ```bash
+   python -m tmhc init clients/Acme/profile.yaml
+   # copy the evidence into clients/Acme/evidence/, edit names/paths in profile.yaml
+   python -m tmhc run clients/Acme/profile.yaml          # report + reads screenshots
+   python -m tmhc checklist clients/Acme/profile.yaml    # checklist pre-filled from screenshots
+   python -m tmhc run clients/Acme/profile.yaml          # again after filling it
+   ```
 
 ### Output
 
@@ -108,7 +127,8 @@ In `clients/Acme/output/`:
 1. Open the review workbook. Filter **Rows** by *Source = Screenshot* and
    spot-check the quotes in the Evidence column.
 2. A wrong screenshot reading: correct it in the checklist (checklist
-   values win over screenshot readings), then run again.
+   values win over screenshot readings) and save. Values you leave as
+   pre-filled stay labelled as screenshot evidence.
 3. A setting you confirmed verbally but have no screenshot for: add it under
    `manual_facts:` in the profile. It wins over every other source and is
    labelled *Analyst entry* in the workbook.
@@ -165,12 +185,14 @@ Workload Protection policy export).
 
 ## Data handling
 
-* Default is `reader: none` - no AI, nothing leaves the machine.
-* `reader: local` talks only to Ollama on `127.0.0.1`. Any other host is
-  refused unless `allow_remote_host: true` (for a GPU server you control).
+* Default reader is `ocr`: no AI, no network. The watcher service is
+  started with network access denied (`IPAddressDeny=any`).
+* `reader: ocr+local` / `local` talk only to Ollama on `127.0.0.1`; any other
+  host is refused unless `allow_remote_host: true`.
 * `reader: cloud` (Anthropic API) is refused unless the profile also sets
-  `allow_cloud: true`, and needs `pip install anthropic`. Use it only where
-  the client has approved sending screenshots to a cloud service.
+  `allow_cloud: true`, and needs `pip install anthropic`.
+* The Samba share requires the VM user's share password. `config.yaml` (may
+  hold the zip password) is readable only by that user.
 * Client evidence and generated reports are never committed: `.gitignore`
   excludes `clients/`, `output/`, `*.cmpolicy`, `*.csv`, `*.zip`, caches,
   checklists and every `.docx`/`.xlsx` except the template.

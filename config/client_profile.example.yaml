@@ -24,10 +24,12 @@ options:
   skip_covered: true               # don't read screenshots for settings the exports prove
 
   # How screenshots are read. Nothing leaves this machine unless you choose 'cloud'.
-  #   none  - don't read screenshots; use the checklist (works on any laptop)
-  #   local - vision model in Ollama on this machine (needs a decent GPU)
-  #   cloud - Anthropic API; ALSO needs allow_cloud: true
-  reader: none
+  #   ocr       - text recognition + checkbox detection (default; fast, no AI, no GPU)
+  #   ocr+local - ocr first, then a local AI model (Ollama) for what ocr missed
+  #   none      - don't read screenshots; use the checklist only
+  #   local     - local AI model only
+  #   cloud     - Anthropic API; ALSO needs allow_cloud: true
+  reader: ocr
   local_model: qwen2.5vl:7b        # qwen2.5vl:3b for smaller GPUs
   ollama_host: http://127.0.0.1:11434
   allow_cloud: false

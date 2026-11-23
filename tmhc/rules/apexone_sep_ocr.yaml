@@ -1,0 +1,230 @@
+# ---------------------------------------------------------------------------
+# OCR field specs for the Apex One / Standard Endpoint Protection health check.
+#
+# Each entry tells the OCR reader where a setting is on screen and how to
+# read it. Keys must match fact keys used in apexone_sep.yaml.
+#
+#   page:      any of these phrases must be visible (identifies the console page)
+#   kind:      checkbox | all_checked | radio | radio_rows | text | toggles | license
+#   label:     on-screen text next to the control (fuzzy matched; OCR typos OK)
+#   trust:     multiplier on confidence. 1.0 = calibrated on real screenshots;
+#              0.8 = label taken from the product UI but not yet seen in a capture
+#
+# "Calibrated" entries were checked against hand-verified values from a real
+# engagement. Uncalibrated ones still only report what they actually see.
+# ---------------------------------------------------------------------------
+fields:
+
+  # ---------------- Vision One / licence (calibrated) ----------------------
+  license:
+    page: ["License Information", "Credit conversion", "Expiration date"]
+    kind: license
+    row_re: "Endpoint Security|Endpoint Protection|Server & Workload|Email"
+
+  admin.inactive_agent_removal:
+    page: ["Inactive Endpoint Removal Settings", "Global Settings"]
+    kind: checkbox
+    label: Automatically remove if disconnected more than
+    when_on: Enabled
+    when_off: Disabled
+    number_unit: Days
+
+  # ---------------- Standard Endpoint Protection administration (calibrated) --
+  admin.schedule_update:
+    page: ["Download Schedule"]
+    kind: radio_rows
+    option: Every
+    below: Download Schedule
+    above: Deployment Plan
+    map:
+      - {re: "(\\d+)\\s*minute", display: "{0} minutes"}
+      - {re: "(\\d+)\\s*hour", display: "{0} hours", singular: "1 hour"}
+      - {re: "\\bday", display: "Daily"}
+      - {re: "\\bweek", display: "Weekly"}
+
+  admin.deployment_plan:
+    page: ["Deployment Plan"]
+    kind: radio
+    below: Deployment Plan
+    options:
+      - {label: immediately, display: immediately}
+      - {label: "Delay:", display: "Delayed"}
+      - {label: Define different deployment plans for managed products, display: "Different plans per product"}
+      - {label: Do not deploy, display: "Do not deploy"}
+
+  admin.ad_sync:
+    page: ["Active Directory and Compliance Settings", "Active Directory synchronization"]
+    kind: checkbox
+    label: Enable Active Directory synchronization
+    when_on: Enabled
+    when_off: Not Configured
+
+  admin.syslog:
+    page: ["Syslog Settings"]
+    kind: checkbox
+    label: Enable syslog forwarding
+    when_on: Enabled
+    when_off: Not Configured
+
+  admin.event_notifications:
+    page: ["Event Notifications"]
+    kind: toggles
+    column: Status
+
+  # ---------------- Apex One server pages (calibrated) -----------------------
+  global.agent_update_schedule:
+    page: ["Agent Automatic Updates", "Schedule-based Update"]
+    kind: radio
+    options:
+      - {label: "Hour(s)", display: Hourly}
+      - {label: Daily, display: Daily, min_score: 78}
+      - {label: "Weekly, every", display: Weekly}
+
+  global.agent_update_source:
+    page: ["Agent Update Source"]
+    kind: radio
+    options:
+      - {label: "Standard update source (update from Apex One server)", value: standard, display: "Standard update source (Apex One Server)"}
+      - {label: Customized update source, value: customized, display: "Customized update source"}
+    derive:
+      - when: standard
+        set:
+          global.ua_only_from_server: [false, "N/A (standard update source)"]
+          global.ua_components: [false, "N/A (standard update source)"]
+          global.ua_domain_settings: [false, "N/A (standard update source)"]
+          global.ua_programs: [false, "N/A (standard update source)"]
+
+  global.smart_protection_feedback:
+    page: ["Smart Protection Network", "Smart Feedback"]
+    kind: checkbox
+    label: Enable Trend Micro Smart Feedback and agree to allow targeted attack indicator scanning
+
+  global.so_subscribed:
+    page: ["Suspicious Object List Settings", "Suspicious Object List Subscription"]
+    kind: text
+    patterns:
+      - {re: "not subscribed", value: false, display: "Not subscribed"}
+      - {re: "is subscribed to the Suspicious Object", value: true, display: Subscribed}
+
+  global.so_lists_enabled:
+    page: ["Suspicious Object List"]
+    kind: all_checked
+    labels:
+      - Enable Suspicious URL list
+      - Enable Suspicious IP list
+      - Enable Suspicious File list
+      - Enable Suspicious Domain list
+
+  global.so_auto_update:
+    page: ["Update the Suspicious Object lists on Security Agents"]
+    kind: radio
+    options:
+      - {label: Automatically after updating the Suspicious Object lists on the server, value: true, display: Enabled}
+      - {label: Based on the Security Agent component update schedule, value: false, display: "Based on agent update schedule"}
+
+  # ---------------- Apex One Global Agent Settings ---------------------------
+  # Calibrated on real captures except scan_cookies and certified safe software
+  # (trust 0.8), whose labels were not readable in the sample.
+  global.exclude_exchange:
+    kind: checkbox
+    label: Exclude Microsoft Exchange server folders and files from scans
+    trust: 0.9
+  global.deferred_scanning:
+    kind: checkbox
+    label: Enable deferred scanning on file operations
+    trust: 0.9
+  global.elam:
+    kind: checkbox
+    label: Enable Early Launch Anti-Malware
+    trust: 0.9
+  global.clean_compressed:
+    kind: checkbox
+    label: Clean/Delete infected files within compressed files
+    trust: 0.9
+  global.scan_cookies:
+    kind: checkbox
+    label: Scan for cookies
+    min_score: 88
+    trust: 0.8
+  global.count_cookie:
+    kind: checkbox
+    label: Count cookie into spyware log
+    trust: 0.9
+  global.firewall_enabled:
+    kind: checkbox
+    label: Enable the Apex One Firewall
+    trust: 0.9
+    derive:
+      # report convention: firewall sub-options are N/A while the firewall is off
+      - when: "False"
+        set:
+          global.firewall_driver_restart: [false, "N/A"]
+          global.firewall_log_count: [false, "N/A"]
+          global.firewall_log_interval: ["N/A", "N/A"]
+  global.sps_proxy:
+    kind: checkbox
+    label: Use configured Smart Protection Sources for service queries
+    trust: 0.9
+  global.firewall_driver_restart:
+    kind: checkbox
+    label: Update the Apex One Firewall driver only after a system restart
+    trust: 0.9
+  global.firewall_log_count:
+    kind: checkbox
+    label: Send firewall log count information to the Apex One server hourly
+    trust: 0.9
+  global.certified_safe_software:
+    kind: checkbox
+    label: Enable the Certified Safe Software Service
+    trust: 0.8
+  global.single_log_entry:
+    kind: checkbox
+    label: Enable the Security Agent to create a single virus/malware log entry for recurring detections
+    trust: 0.9
+  global.manual_scan_shortcut:
+    kind: checkbox
+    label: Add Manual Scan to the Windows shortcut menu on endpoints
+    trust: 0.9
+  global.pattern_alert_icon:
+    kind: checkbox
+    label: Show the alert icon on the Windows taskbar if the virus pattern file is not updated after
+    trust: 0.9
+  global.restart_notification:
+    kind: checkbox
+    label: Display a notification message if the endpoint needs to restart to load a kernel mode driver
+    trust: 0.9
+
+  # ---------------- numbers in input boxes / dropdowns ----------------------
+  # Read twice (plain + thresholded); used only when both readings agree.
+  global.polling_interval:
+    kind: number_box
+    label: "Polling interval:"
+    display: "{} minutes"
+    singular: "1 minute"
+    trust: 0.95
+  global.service_restart_after:
+    kind: number_box
+    label: Restart the service after
+    min_score: 92
+    display: "{} minutes"
+    singular: "1 minute"
+    trust: 0.95
+  global.service_restart_retries:
+    kind: number_box
+    label: is unsuccessful, retry
+    min_score: 82
+    display: "{} times"
+    singular: "1 time"
+    trust: 0.95
+  global.service_restart_reset:
+    kind: number_box
+    label: Reset the unsuccessful restart count after
+    display: "{} hours"
+    singular: "1 hour"
+    trust: 0.95
+  global.bm_response_timeout:
+    kind: number_box
+    label: Automatically take action if the user does not respond within
+    min_score: 80
+    display: "{} seconds"
+    trust: 0.95
