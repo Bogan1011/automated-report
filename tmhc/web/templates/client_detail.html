@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block crumbs %}<a href="/clients">Clients</a><span>/</span>{{ client.name if client else '' }}{% endblock %}
+{% block body %}
+<div class="head"><div><h1>{{ client.name }}</h1><p class="sub">{{ client.count }} report{{ 's' if client.count != 1 }}{% if client.products %} &middot; {{ client.products|join(', ') }}{% endif %}</p></div>
+<div class="actions" style="margin:0">{% for k, v in products_info.items() %}<a class="btn {{ 'ghost' if not loop.first }}" href="/new?product={{ k }}&client={{ client.dir|urlencode }}" title="New {{ v.name }} report - details copied from the last one">+ {{ k }} report</a>{% endfor %}</div></div>
+{% if loose %}<p class="msg warn"><span>New evidence was dropped into this client's folder &ndash; it is being moved into its own report folder.</span></p>{% endif %}
+{% for q, reps in quarters.items() %}<div class="quarter"><h2>{{ q }}</h2><div class="rgrid">
+{% for r in reps %}<div class="rcard {{ r.short }}"><span class="tag {{ r.short }}">{{ r.short }}</span>
+<h3><a href="{{ r.url }}">{{ r.product }}</a></h3><div class="muted small-text">{{ r.job }}{% if r.prepared_by %} &middot; {{ r.prepared_by }}{% endif %} &middot; updated {{ r.updated }}</div>
+<div style="margin-top:10px">{% include "_status.html" %}</div>
+<div class="files">{% include "_downloads.html" %}<a class="btn small ghost" href="{{ r.url }}">Open</a></div></div>
+{% endfor %}</div></div>{% else %}<div class="card empty"><b>No reports for this client yet</b>Use the buttons above to start one.</div>{% endfor %}
+{% endblock %}

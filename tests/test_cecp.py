@@ -248,7 +248,7 @@ def test_cecp_tab_and_upload(site, tmp_path):
     r = client.post("/new", data={"client_name": "Acme Mail", "product": "Cloud Email and Collaboration Protection"},
                     files={"logs_zip": ("logs.zip", zp.read_bytes())}, follow_redirects=False)
     assert r.status_code == 303
-    prof = yaml.safe_load((inbox / "Acme Mail" / "profile.yaml").read_text())
+    prof = yaml.safe_load(next((inbox / "Acme Mail").glob("CECP Q* */profile.yaml")).read_text())
     assert prof["options"]["rules"] == "cecp"
     assert "detection log found" in client.get(r.headers["location"]).text
     assert "Acme Mail" in client.get("/?tab=CECP").text and "Acme Mail" not in client.get("/?tab=SEP").text

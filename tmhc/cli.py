@@ -297,7 +297,11 @@ def make_checklist(profile_path: Path, force: bool = False, sync: bool = False, 
 
 
 def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False,
-          dry_run: bool = False, template: Path | None = None) -> HealthCheck:
+          dry_run: bool = False, template: Path | None = None, progress=None) -> HealthCheck:
+    """Build the report (and presentation). `progress(pct, stage)` gets the
+    percentage done and the current step, for the website's progress bar."""
+    tick = progress or (lambda pct, stage: None)
+    tick(4, "Reading the logs and exports")
     prof, base, opts, ev = _load_profile(profile_path)
     rules = load_rules(opts.get("rules", "apexone_sep"))
     short = pack_short(rules)
@@ -322,7 +326,8 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
             if dry_run:
                 say(f"would OCR every screenshot in {shots_docx.name}")
             else:
-                ocr.run(shots_docx, cache_path, opts.get("rules", "apexone_sep"), progress=say)
+                ocr.run(shots_docx, cache_path, opts.get("rules", "apexone_sep"), progress=say,
+                        tick=lambda i, n: tick(10 + 60 * i / max(n, 1), f"Reading screenshots ({i} of {n})"))
         model_kind = reader_kind.split("+")[-1] if "+" in reader_kind else (
             reader_kind if reader_kind in ("local", "cloud") else None)
         if model_kind:
@@ -338,6 +343,7 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
         hc.add_facts(cache_facts)
         say(f"screenshots: {len(cache_facts)} readings from cache")
 
+    tick(72, "Combining screenshots, logs and checklist")
     # ---- checklist + analyst entries ---------------------------------------
     cl_path = base / ev.get("checklist", "checklist.xlsx")
     cl_facts = checklist.read(cl_path, screenshots.field_catalogue(rules))
@@ -358,14 +364,18 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
     elif short == "CECP":
         from .engine import derive_cecp
         derive_cecp.derive(hc)
+    tick(76, "Checking settings against Trend Micro recommendations")
     evaluate(hc, rules)
     first = hc.client_name.split()[0] if hc.client_name else "Client"
     stem = f"{first}_{short}_Health_Check_Report_{report.strftime('%b_%Y')}"
     product = prof.get("product") or (rules.get("meta") or {}).get("product", "Standard Endpoint Protection")
+    tick(80, "Writing the Word report")
     docx_out = render(hc, out_dir / f"{stem}.docx", template or PACK_TEMPLATES.get(short, DEFAULT_TEMPLATE),
                       product=product, short=short)
+    tick(87, "Writing the review workbook")
     review_out = write_review(hc, out_dir / f"{stem}_review.xlsx")
     if not opts.get("no_presentation"):
+        tick(90, "Building the presentation")
         try:
             from .render.pptx_report import render_presentation
             ppt_out = render_presentation(hc, out_dir / f"{stem.replace('Health_Check_Report', 'Product_Efficacy_Report')}.pptx",
@@ -376,6 +386,7 @@ def build(profile_path: Path, out_dir: Path | None = None, offline: bool = False
             hc.warnings.append(f"presentation not built: {exc}")
             say(f"presentation not built: {exc}")
     shutil.rmtree(logs_copy, ignore_errors=True)
+    tick(96, "Report and presentation written")
     counts = status_counts(hc)
     say(f"\nrows: {counts}")
     if counts.get("unknown"):

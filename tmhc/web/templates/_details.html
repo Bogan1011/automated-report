@@ -1,5 +1,6 @@
 <div class="grid">
-<div><label>Client name <span class="hint">as printed in the report</span></label><input type="text" name="client_name" value="{{ f.client_name or '' }}" required placeholder="e.g. Acme Industries Private Limited"></div>
+<div><label>Client name <span class="hint">as printed in the report</span></label><input type="text" name="client_name" value="{{ f.client_name or '' }}" required placeholder="e.g. Acme Industries Private Limited" list="client-names" autocomplete="off">
+{% if client_names %}<datalist id="client-names">{% for n in client_names %}<option value="{{ n }}">{% endfor %}</datalist>{% endif %}</div>
 <div><label>Product</label><select name="product" id="product-select" onchange="tmhcBuilds()">{% for p in products %}<option {{ 'selected' if f.product==p }}>{{ p }}</option>{% endfor %}</select></div>
 <div><label>Prepared by</label><input type="text" name="prepared_by" value="{{ f.prepared_by or '' }}"></div>
 <div><label>Approved by</label><input type="text" name="approved_by" value="{{ f.approved_by or '' }}"></div>

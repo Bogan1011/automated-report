@@ -22,7 +22,7 @@ screenshots stay on that machine. Nothing is uploaded unless you deliberately
 switch on the cloud reader for a client that has approved it.
 
 ```
- drop into inbox/<Client>/            read locally                 written to <Client>/output/
+ inbox/<Client>/<SEP Q4 2026>/         read locally                 written to .../output/
  ─────────────────────────            ────────────                 ───────────────────────────
  screenshots .docx  ──── OCR + checkbox/radio/toggle detection ─┐
  logs .zip  ─────────── policy export, agent list, log CSVs ────┼─► rules ─► Word report + review workbook
@@ -88,19 +88,32 @@ one and prints the address (e.g. `http://192.168.1.70:8090`). Use
 
 **Every health check:**
 
-1. Open the website, **New health check**: client name, prepared/approved
-   by, dates (blank check date = read from the screenshots), then attach the
-   screenshot Word file and the logs zip. **Upload and build report.**
-2. The client page shows an upload check straight away (pictures found, zip
-   opened with the saved password, policy export and agent list present),
-   then the build status. About 4 minutes on 2 vCPU.
+1. Open the website, **New report** (or, on a client's page, **+ SEP / SWP /
+   CECP report** - the details are copied from that client's last report):
+   client name, prepared/approved by, dates (blank check date = read from the
+   screenshots), then attach the screenshot Word file and the logs zip.
+   **Generate report.** A bar shows the upload; once it reaches 100% the
+   report is generated on the server and you can go to any page.
+2. The report page shows the percentage done and the current step (logs,
+   screenshots *n of N*, Word report, presentation...). Every page shows the
+   running reports bottom right, and a "Report ready" note when one
+   finishes. Builds start within a couple of seconds and run one after the
+   other. About 4 minutes on 2 vCPU for a new set of screenshots.
 3. **Fill in settings** (available from the moment you upload, even while
    it builds): after each build, everything the report shows as
    "Not captured" is listed first, with dropdowns or suggestions; readings
    from screenshots are pre-filled to check. **Save** - the report rebuilds
    in under a minute without those "Not captured" rows.
-4. **Download report** (and the review workbook). In Word, accept the prompt
-   to update the table of contents.
+4. **Download report** / **presentation** (and the review workbook). In Word,
+   accept the prompt to update the table of contents.
+
+**Pages:** *Dashboard* (counts, and every report per product tab with live
+status), *Clients* (one card per client; open one to see all its reports by
+quarter, newest first), *Settings*. Each client has its own folder and each
+quarter's report its own sub-folder, `inbox/<Client>/<SEP Q4 2026>/`, so a
+client's history stays together. Reports made with the older one-folder-per-
+client layout are moved into this layout automatically the first time the
+watcher runs after the update.
 
 **Settings** (website): default names for new health checks, **Trend's
 latest Apex One agent build** (set it when Trend releases a new one; every
@@ -118,10 +131,10 @@ PBKDF2-hashed passwords; traffic is plain HTTP inside the LAN.
 | | |
 |---|---|
 | Settings file | `config.yaml` in the data folder (the website edits it) |
-| Client folders | `inbox/<Client>/` in the data folder (`output/` holds the report) |
+| Client folders | `inbox/<Client>/<Product> <Quarter>/` in the data folder (`output/` holds the report and presentation) |
 | Live log | `journalctl -u tmhc-web -u tmhc-watch -f` |
 | Update | `cd ~/automated-report && git pull && ./deploy/install.sh` |
-| Without the website | copy files into `~/healthcheck/inbox/<Client>/` (Samba or WinSCP) - same result |
+| Without the website | copy files into `~/healthcheck/inbox/<Client>/` (Samba or WinSCP) - they are moved into a `<Product> <Quarter>` sub-folder and built |
 
 **Optional local AI (`--with-ai`).** Installs Ollama with `qwen2.5vl:3b`
 (CPU, ~3 GB) and adds 4 GB swap; the AI then reads only what OCR could not.

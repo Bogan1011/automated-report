@@ -1,13 +1,18 @@
-{% extends "base.html" %}{% set active='list' %}
-{% block head %}{% if busy %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
-{% block body %}<div class="actions" style="justify-content:space-between;margin:0 0 16px"><div><h1>Clients</h1><p class="sub" style="margin:0">Reports are built automatically on this server after each upload.</p></div>
-<a class="btn" href="/new?product={{ tab }}">+ New {{ tab }} health check</a></div>
-<div class="tabs">{% for k, v in tabs.items() %}<a class="tab {{ 'on' if k==tab }}" href="/?tab={{ k }}">{{ k }} <span class="muted">&ndash; {{ v.name }}</span> <span class="count">{{ counts[k] }}</span></a>{% endfor %}</div>
-<div class="card" style="padding:0">{% if rows %}<table><tr><th>Client</th><th>Prepared by</th><th>Check date</th><th>Status</th><th>Updated</th><th class="right">Download</th></tr>
-{% for r in rows %}<tr><td><a href="/client/{{ r.name|urlencode }}"><b>{{ r.client }}</b></a></td><td>{{ r.prepared_by }}</td><td class="nowrap">{{ r.check_date }}</td>
-<td><span class="pill {{ r.status }}">{% if r.status in ('building','queued') %}<span class="spin"></span>{% endif %}{{ r.status }}</span><div class="muted" style="font-size:12px">{{ r.detail }}</div></td>
-<td class="nowrap muted">{{ r.updated }}</td>
-<td class="right nowrap">{% if r.outputs.report %}<a class="btn small" href="/client/{{ r.name|urlencode }}/download/report">Report</a>{% endif %}
-{% if r.outputs.presentation %}<a class="btn small" href="/client/{{ r.name|urlencode }}/download/presentation">PPT</a>{% endif %}
-{% if r.outputs.review %}<a class="btn ghost small" href="/client/{{ r.name|urlencode }}/download/review">Review</a>{% endif %}</td></tr>{% endfor %}</table>
-{% else %}<p style="padding:20px" class="muted">No {{ tab }} health checks yet. <a href="/new?product={{ tab }}">Start one</a>.</p>{% endif %}</div>{% endblock %}
+{% extends "base.html" %}
+{% block crumbs %}Dashboard{% endblock %}
+{% block body %}
+<div class="head"><div><h1>Dashboard</h1><p class="sub">Reports are built on this server. A build keeps running while you work on other pages &ndash; progress shows bottom right.</p></div>
+<a class="btn" href="/new?product={{ tab }}">+ New {{ tab }} report</a></div>
+<div class="stats">
+<div class="stat"><span>Clients</span><b>{{ stats.clients }}</b></div>
+<div class="stat t"><span>Reports in {{ stats.quarter }}</span><b>{{ stats.this_quarter }}</b><div class="muted small-text">{{ stats.reports }} in total</div></div>
+<div class="stat a"><span>Building now</span><b id="stat-active">{{ stats.active }}</b></div>
+<div class="stat a"><span>Need attention</span><b>{{ stats.attention }}</b><div class="muted small-text">failed, or settings not captured</div></div>
+</div>
+<div class="tabs">{% for k, v in tabs.items() %}<a class="tab {{ 'on' if k==tab }}" href="/?tab={{ k }}">{{ k }} <span class="long">{{ v.name }}</span> <span class="count">{{ counts[k] }}</span></a>{% endfor %}</div>
+<div class="card flush">{% if rows %}<table><thead><tr><th>Client</th><th>Quarter</th><th>Prepared by</th><th style="width:230px">Status</th><th>Updated</th><th class="right">Download</th></tr></thead><tbody>
+{% for r in rows %}<tr><td><a href="{{ r.url }}"><b>{{ r.client }}</b></a><div class="muted small-text"><a class="muted" href="/clients/{{ r.client_dir|urlencode }}">all reports of this client &rsaquo;</a></div></td>
+<td class="nowrap">{{ r.quarter }}</td><td>{{ r.prepared_by }}</td><td>{% include "_status.html" %}</td>
+<td class="nowrap muted">{{ r.updated }}</td><td class="right nowrap">{% include "_downloads.html" %}</td></tr>{% endfor %}</tbody></table>
+{% else %}<div class="empty"><b>No {{ tab }} reports yet</b><a href="/new?product={{ tab }}">Create the first one</a></div>{% endif %}</div>
+{% endblock %}

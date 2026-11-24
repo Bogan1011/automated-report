@@ -188,7 +188,7 @@ def test_tabs_and_swp_upload(site, tmp_path):
                                   "latest_dsa_windows": "20.0.3.29020", "latest_dsa_linux": "20.0.3.28120"},
                     files={"logs_zip": ("logs.zip", zp.read_bytes())}, follow_redirects=False)
     assert r.status_code == 303
-    prof = yaml.safe_load((inbox / "Acme Servers" / "profile.yaml").read_text())
+    prof = yaml.safe_load(next((inbox / "Acme Servers").glob("SWP Q* */profile.yaml")).read_text())
     assert prof["options"]["rules"] == "swp" and prof["latest_dsa_linux"] == "20.0.3.28120"
     assert "Computers.csv found" in client.get(r.headers["location"]).text
     swp_tab = client.get("/?tab=SWP").text

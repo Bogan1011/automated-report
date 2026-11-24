@@ -1,7 +1,25 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Health Check Reports{% endblock %}</title><link rel="stylesheet" href="/static/style.css">
 {% block head %}{% endblock %}</head><body>
-<header><div class="bar"><a class="brand" href="/">Health Check <span>Reports</span></a>
-{% if user %}<nav><a href="/" class="{{ 'on' if active=='list' }}">Clients</a><a href="/new" class="{{ 'on' if active=='new' }}">New health check</a><a href="/settings" class="{{ 'on' if active=='settings' }}">Settings</a></nav>
-<div class="who">{{ user }}<form method="post" action="/logout"><button class="btn ghost small">Sign out</button></form></div>{% endif %}
-</div></header><main>{% block body %}{% endblock %}</main></body></html>
+{% if user %}<div class="shell">
+<aside class="side">
+<a class="brand" href="/"><span class="mark"><i></i><i></i><i></i></span><span>Health Check<small>Reports</small></span></a>
+<nav class="nav">
+<a href="/new" class="cta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New report</a>
+<a href="/" class="{{ 'on' if active=='dashboard' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</a>
+<a href="/clients" class="{{ 'on' if active=='clients' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Clients</a>
+<div class="sep"></div>
+<a href="/settings" class="{{ 'on' if active=='settings' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
+</nav>
+<div class="side-foot"><span><span class="avatar">{{ (user or '?')[:1]|upper }}</span>{{ user }}</span>
+<form method="post" action="/logout"><button>Sign out</button></form></div>
+</aside>
+<div class="page">
+<div class="top"><div class="crumbs">{% block crumbs %}{% endblock %}</div>
+<button class="act-btn" id="act-btn" type="button" onclick="TMHC.togglePanel()"><span class="dot"></span><span id="act-label">No reports building</span></button></div>
+<main>{% block body %}{% endblock %}</main>
+</div></div>
+<div class="activity" id="activity"></div>
+<script src="/static/app.js"></script>
+{% else %}{% block anon %}{% endblock %}{% endif %}
+</body></html>

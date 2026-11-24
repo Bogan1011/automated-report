@@ -1,0 +1,7 @@
+{# one report's live status: pill + progress bar; updated in place by app.js via data-key #}
+<div class="live" data-key="{{ r.client_dir }}/{{ r.job }}" data-status="{{ r.status }}">
+{% if r.status in ('building','queued') %}<span class="pill {{ r.status }}"><span class="spin"></span><span class="lbl">{{ r.status }}{% if r.status=='building' %} &middot; {{ r.pct }}%{% endif %}</span></span>
+<div class="bar {{ r.status }}" style="margin-top:6px"><i style="width:{{ r.pct }}%"></i></div><div class="live-detail">{{ r.detail }}</div>
+{% elif r.status=='done' %}<span class="pill done">ready</span>{% if r.pending %}<div class="live-detail">{{ r.pending }} not captured</div>{% endif %}
+{% else %}<span class="pill {{ r.status }}">{{ r.status }}</span>{% if r.status=='error' %}<div class="live-detail">{{ r.detail[:90] }}</div>{% endif %}{% endif %}
+</div>

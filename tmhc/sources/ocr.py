@@ -984,9 +984,10 @@ def page_dates(text: str) -> list[str]:
     return valid
 
 
-def run(docx_path, cache_path, pack: str = "apexone_sep", progress=print) -> list[dict]:
+def run(docx_path, cache_path, pack: str = "apexone_sep", progress=print, tick=None) -> list[dict]:
     """OCR every screenshot in the Word file (cached per image) and store the
-    combined readings in the shared screenshot cache as one 'ocr' entry."""
+    combined readings in the shared screenshot cache as one 'ocr' entry.
+    `tick(i, n)` is called after each screenshot (for a progress bar)."""
     import hashlib
     import json
     from .screenshots import extract_images
@@ -1000,7 +1001,7 @@ def run(docx_path, cache_path, pack: str = "apexone_sep", progress=print) -> lis
     raw = data.setdefault("ocr_pages", {})
     shots = extract_images(docx_path)
     per_page, done = [], 0
-    for shot in shots:
+    for n_shot, shot in enumerate(shots, 1):
         tag = f"{shot.sha1}:{spec_hash}"
         if tag not in raw:
             ocr_opts = specs.get("ocr") or {}
@@ -1014,6 +1015,8 @@ def run(docx_path, cache_path, pack: str = "apexone_sep", progress=print) -> lis
             if done % 10 == 0:
                 progress(f"  OCR {done} new screenshots read...")
         per_page.append(raw[tag]["results"])
+        if tick:
+            tick(n_shot, len(shots))
     fields = aggregate(per_page, specs)
     from collections import Counter
     dates = Counter(d for tag in raw if tag.split(":")[0] in {sh.sha1 for sh in shots}

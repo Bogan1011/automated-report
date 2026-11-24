@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% set active='settings' %}{% block body %}
+{% extends "base.html" %}{% block crumbs %}Settings{% endblock %}{% block body %}
 <h1>Settings</h1><p class="sub">Defaults for new health checks, and the server-wide logs zip password.</p>
 {% if saved %}<p class="msg ok">Saved.</p>{% endif %}
 <form method="post" action="/settings"><div class="card"><h2>Defaults for new health checks</h2><div class="grid">

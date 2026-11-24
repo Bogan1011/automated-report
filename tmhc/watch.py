@@ -3,16 +3,23 @@
     python -m tmhc watch                       # uses ~/healthcheck/config.yaml
     python -m tmhc watch --config /path/config.yaml --once
 
-Layout of the inbox (one folder per client):
+Layout of the inbox (one folder per client, one sub-folder per report):
 
     inbox/
-      Acme Industries/
-        Acme_SEP_SS.docx     <- screenshots (any .docx name)
-        Acme_SEP_Logs.zip            <- exports     (any .zip name)
-        profile.yaml                    <- created automatically, edit if needed
-        checklist.xlsx                  <- created after the first run; fill blanks
-        output/                         <- the report and review workbook
-        STATUS.txt                      <- what happened, and what to do next
+      Acme Industries/                    <- the client
+        SEP Q4 2026/                      <- one health check (product + quarter)
+          Acme_SEP_SS.docx                <- screenshots (any .docx name)
+          Acme_SEP_Logs.zip               <- exports     (any .zip name)
+          profile.yaml                    <- created automatically, edit if needed
+          checklist.xlsx                  <- created after the first run; fill blanks
+          output/                         <- the report, presentation and review workbook
+          STATUS.txt                      <- what happened, and what to do next
+        SEP Q1 2027/
+        CECP Q4 2026/
+
+Evidence dropped straight into a client folder (or a new folder named after
+the client) is moved into its own "<product> <quarter>" sub-folder once the
+copy has finished - so older single-level folders are reorganised too.
 
 A folder is processed once its files have stopped changing (copying
 finished). It is processed again whenever the screenshots, exports,
@@ -40,6 +47,9 @@ from .sources import screenshots
 
 DEFAULT_CONFIG = Path.home() / "healthcheck" / "config.yaml"
 STATE_FILE = ".tmhc_state.json"
+PROGRESS_FILE = ".progress.json"      # {"pct": 0-100, "stage": "...", "started": iso} while building
+GO_FILE = ".go"                       # written by the website: build now, no settle wait
+RULES_SHORT = {"apexone_sep": "SEP", "swp": "SWP", "cecp": "CECP"}
 
 DEFAULT_CONFIG_TEXT = """\
 # Health-check watcher settings
@@ -125,6 +135,144 @@ def newest_change(fp: dict) -> float:
 
 
 # --------------------------------------------------------------------------
+# clients and their reports
+# --------------------------------------------------------------------------
+def safe_name(name: str) -> str:
+    """Client / report name -> folder name: no path tricks, nothing Windows dislikes."""
+    import re
+    name = re.sub(r"[^\w .&()\-,]", "", str(name), flags=re.UNICODE).strip(" .")
+    name = re.sub(r"\s+", " ", name)
+    return name[:90]
+
+
+def _visible_dirs(folder: Path) -> list[Path]:
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir()
+                  if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "output")
+
+
+def iter_clients(inbox: Path) -> list[Path]:
+    return _visible_dirs(inbox)
+
+
+def iter_jobs(inbox: Path) -> list[Path]:
+    """Every report folder: inbox/<client>/<report>."""
+    return [job for client in iter_clients(inbox) for job in _visible_dirs(client)]
+
+
+def job_key(folder: Path) -> str:
+    return f"{folder.parent.name}/{folder.name}"
+
+
+def short_of(prof: dict) -> str:
+    rules = str((prof.get("options") or {}).get("rules", "apexone_sep"))
+    if rules in RULES_SHORT:
+        return RULES_SHORT[rules]
+    try:
+        from .cli import pack_short
+        return pack_short(load_rules(rules))
+    except Exception:
+        return "SEP"
+
+
+def quarter_of(prof: dict) -> str:
+    """The quarter a report belongs to: as entered, else from the check date, else the report date."""
+    q = str(prof.get("quarter") or "")
+    if q and q != "auto":
+        return q
+    for k in ("check_date", "report_date"):
+        try:
+            return _quarter(dt.date.fromisoformat(str(prof.get(k))))
+        except ValueError:
+            continue
+    return _quarter(dt.date.today())
+
+
+def unique_dir(parent: Path, name: str) -> Path:
+    cand, i = parent / name, 2
+    while cand.exists():
+        cand, i = parent / f"{name} ({i})", i + 1
+    return cand
+
+
+def _loose_items(folder: Path) -> list[Path]:
+    """What makes a folder a report rather than a client: evidence or a profile right inside it."""
+    return [p for p in folder.iterdir()
+            if (p.is_file() and p.name != "client.yaml") or p.name in ("output", ".logs_cache")]
+
+
+def migrate_loose(cfg: dict, state: dict, settle: float = 0) -> list[tuple[str, str]]:
+    """Move reports that sit directly in a top-level folder into <client>/<product> <quarter>/."""
+    inbox: Path = cfg["inbox"]
+    moved = []
+    for d in iter_clients(inbox):
+        if not (find_evidence(d) or (d / "profile.yaml").exists()):
+            continue
+        fp = fingerprint(d)
+        if settle and not (d / GO_FILE).exists() and time.time() - newest_change(fp) < settle:
+            continue                                   # still copying
+        if (d / ".building").exists():
+            continue
+        prof_path = ensure_profile(d, cfg) if find_evidence(d) else d / "profile.yaml"
+        prof = yaml.safe_load(prof_path.read_text(encoding="utf-8")) or {}
+        client = safe_name(prof.get("client_name") or d.name) or d.name
+        job = safe_name(f"{short_of(prof)} {quarter_of(prof)}")
+        subdirs = _visible_dirs(d)
+        if not subdirs:                                # the whole folder is one report
+            if client == d.name:
+                tmp = inbox / f".moving-{d.name}"
+                d.rename(tmp)
+                (inbox / client).mkdir()
+                dest = unique_dir(inbox / client, job)
+                tmp.rename(dest)
+            else:
+                (inbox / client).mkdir(exist_ok=True)
+                dest = unique_dir(inbox / client, job)
+                d.rename(dest)
+        else:                                          # a client folder with loose new evidence
+            dest = unique_dir(d, job)
+            dest.mkdir()
+            for item in _loose_items(d):
+                item.rename(dest / item.name)
+        old = d.name
+        if old in state:
+            state[job_key(dest)] = state.pop(old)
+        moved.append((old, job_key(dest)))
+        _log(f"[{old}] moved to {job_key(dest)}")
+    if moved:
+        _save_state(inbox, state)
+    return moved
+
+
+class Progress:
+    """Writes <report>/.progress.json for the website (percent done + current step)."""
+
+    def __init__(self, folder: Path):
+        self.path = folder / PROGRESS_FILE
+        self.pct, self.stage, self.t = -1, "", 0.0
+        self.started = dt.datetime.now().isoformat(timespec="seconds")
+
+    def __call__(self, pct: float, stage: str) -> None:
+        pct = max(self.pct, min(100, int(pct)))       # never goes backwards
+        now = time.time()
+        if pct == self.pct and stage == self.stage and now - self.t < 3:
+            return
+        self.pct, self.stage, self.t = pct, stage, now
+        tmp = self.path.with_name(PROGRESS_FILE + ".tmp")
+        tmp.write_text(json.dumps({"pct": pct, "stage": stage, "started": self.started,
+                                   "at": dt.datetime.now().isoformat(timespec="seconds")}), encoding="utf-8")
+        tmp.replace(self.path)
+
+
+def read_progress(folder: Path) -> dict:
+    try:
+        return json.loads((folder / PROGRESS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+# --------------------------------------------------------------------------
 # profile
 # --------------------------------------------------------------------------
 def _quarter(d: dt.date) -> str:
@@ -199,11 +347,13 @@ def resolve_auto_fields(prof_path: Path) -> None:
 # --------------------------------------------------------------------------
 # one folder
 # --------------------------------------------------------------------------
-def process(folder: Path, cfg: dict) -> str:
+def process(folder: Path, cfg: dict, progress=None) -> str:
     started = time.time()
+    tick = progress or (lambda pct, stage: None)
     ev = find_evidence(folder)
     if not ev:
         return "waiting for evidence (.docx screenshots and/or .zip exports)"
+    tick(2, "Starting")
     prof_path = ensure_profile(folder, cfg)
 
     # OCR first so the check date can be filled from the screenshots
@@ -213,10 +363,12 @@ def process(folder: Path, cfg: dict) -> str:
         if str((prof.get("options") or {}).get("reader", "ocr")).startswith("ocr"):
             ocr.run(folder / ev["screenshots_docx"], folder / "screenshot_cache.json",
                     (prof.get("options") or {}).get("rules", "apexone_sep"),
-                    progress=lambda m: _log(f"[{folder.name}] {m}"))
+                    progress=lambda m: _log(f"[{job_key(folder)}] {m}"),
+                    tick=lambda i, n: tick(10 + 60 * i / max(n, 1), f"Reading screenshots ({i} of {n})"))
     resolve_auto_fields(prof_path)
 
-    hc = build(prof_path)
+    hc = build(prof_path, progress=tick)
+    tick(97, "Updating the checklist")
     make_checklist(prof_path, sync=True, quiet=True)      # new settings added, answers kept
 
     # what the website should ask for: every row still "Not captured", once per setting
@@ -274,20 +426,26 @@ def _save_state(inbox: Path, state: dict) -> None:
 def scan_once(cfg: dict, state: dict, force_settle: bool = False) -> bool:
     inbox: Path = cfg["inbox"]
     settle = 0 if force_settle else int(cfg.get("settle_seconds", 30))
+    migrate_loose(cfg, state, settle)
     did = False
-    for folder in sorted(p for p in inbox.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
+    for folder in iter_jobs(inbox):
+        key = job_key(folder)
+        go = (folder / GO_FILE).exists()
         fp = fingerprint(folder)
         if not find_evidence(folder):
             continue
-        if state.get(folder.name, {}).get("fp") == fp:
+        if state.get(key, {}).get("fp") == fp and not go:
             continue
-        if time.time() - newest_change(fp) < settle:
+        if not go and time.time() - newest_change(fp) < settle:
             continue                                  # still copying / saving
-        _log(f"[{folder.name}] building report...")
+        (folder / GO_FILE).unlink(missing_ok=True)
+        _log(f"[{key}] building report...")
         marker = folder / ".building"
         marker.write_text(dt.datetime.now().isoformat(), encoding="utf-8")
+        prog = Progress(folder)
+        prog(1, "Starting")
         try:
-            result = process(folder, cfg)
+            result = process(folder, cfg, progress=prog)
         except SystemExit as exc:                     # friendly errors from the CLI
             result = f"stopped: {str(exc).strip()}"
             (folder / "STATUS.txt").write_text(f"Could not build the report:\n\n{str(exc).strip()}\n"
@@ -299,11 +457,22 @@ def scan_once(cfg: dict, state: dict, force_settle: bool = False) -> bool:
                                                encoding="utf-8")
         finally:
             marker.unlink(missing_ok=True)
-        _log(f"[{folder.name}] {result}")
-        state[folder.name] = {"fp": fingerprint(folder), "at": dt.datetime.now().isoformat(), "result": result}
+            (folder / PROGRESS_FILE).unlink(missing_ok=True)
+        _log(f"[{key}] {result}")
+        state[key] = {"fp": fingerprint(folder), "at": dt.datetime.now().isoformat(), "result": result}
         _save_state(inbox, state)
         did = True
     return did
+
+
+def _wait(cfg: dict, seconds: int) -> None:
+    """Sleep, but wake up at once when the website asks for a build."""
+    inbox: Path = cfg["inbox"]
+    end = time.time() + seconds
+    while time.time() < end:
+        if any(inbox.glob(f"*/*/{GO_FILE}")) or any(inbox.glob(f"*/{GO_FILE}")):
+            return
+        time.sleep(1)
 
 
 def main(argv=None) -> None:
@@ -317,8 +486,9 @@ def main(argv=None) -> None:
     if a.once:
         scan_once(cfg, state, force_settle=True)
         return
-    for stale in cfg["inbox"].glob("*/.building"):     # left over from a crash/restart
-        stale.unlink(missing_ok=True)
+    for pattern in ("*/.building", "*/*/.building", f"*/*/{PROGRESS_FILE}"):   # left over from a crash/restart
+        for stale in cfg["inbox"].glob(pattern):
+            stale.unlink(missing_ok=True)
     while True:
         try:
             cfg = load_config(a.config)               # pick up settings changed on the website
@@ -326,23 +496,25 @@ def main(argv=None) -> None:
             scan_once(cfg, state)
         except Exception as exc:                      # never let the service die
             _log(f"scan error: {exc}")
-        time.sleep(int(cfg.get("poll_seconds", 20)))
+        _wait(cfg, int(cfg.get("poll_seconds", 20)))
 
 
 # --------------------------------------------------------------------------
 # status for the website
 # --------------------------------------------------------------------------
 def client_status(folder: Path, state: dict | None = None) -> dict:
-    """waiting | queued | building | done | error, plus a one-line detail."""
+    """waiting | queued | building | done | error, plus a one-line detail and (building) pct."""
     if state is None:
-        state = _load_state(folder.parent)
+        state = _load_state(folder.parent.parent)
     if (folder / ".building").exists():
-        return {"status": "building", "detail": "Building the report..."}
+        pr = read_progress(folder)
+        return {"status": "building", "detail": pr.get("stage") or "Building the report...",
+                "pct": int(pr.get("pct", 1)), "started": pr.get("started", "")}
     if not find_evidence(folder):
-        return {"status": "waiting", "detail": "Upload the screenshots and/or logs"}
-    entry = state.get(folder.name) or {}
-    if entry.get("fp") == fingerprint(folder):
+        return {"status": "waiting", "detail": "Upload the screenshots and/or logs", "pct": 0}
+    entry = state.get(job_key(folder)) or {}
+    if entry.get("fp") == fingerprint(folder) and not (folder / GO_FILE).exists():
         result = entry.get("result", "")
         status = "done" if result.startswith("done") else "error"
-        return {"status": status, "detail": result, "at": entry.get("at", "")}
-    return {"status": "queued", "detail": "Queued - starts when the upload has settled"}
+        return {"status": status, "detail": result, "at": entry.get("at", ""), "pct": 100 if status == "done" else 0}
+    return {"status": "queued", "detail": "Queued - starts in a few seconds", "pct": 0}

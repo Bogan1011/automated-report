@@ -1,0 +1,3 @@
+{% if r.outputs.report %}<a class="btn small" href="{{ r.url }}/download/report" title="Word report"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>Word</a>{% endif %}
+{% if r.outputs.presentation %}<a class="btn small navy" href="{{ r.url }}/download/presentation" title="PowerPoint">PPT</a>{% endif %}
+{% if r.outputs.review %}<a class="btn small ghost" href="{{ r.url }}/download/review" title="Review workbook">Review</a>{% endif %}

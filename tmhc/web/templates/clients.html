@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block crumbs %}Clients{% endblock %}
+{% block body %}
+<div class="head"><div><h1>Clients</h1><p class="sub">Every client has its own folder; each quarter's reports are kept inside it.</p></div>
+<form method="get" action="/clients" class="search"><input type="search" name="q" value="{{ q }}" placeholder="Search clients..." oninput="TMHC.filterClients(this.value)"></form></div>
+{% if clients %}<div class="cgrid" id="cgrid">{% for c in clients %}
+<a class="ccard" href="/clients/{{ c.dir|urlencode }}" data-name="{{ c.name|lower }}">
+{% if c.busy %}<span class="pill building live-badge"><span class="spin"></span>building</span>{% endif %}
+<div class="ini">{{ c.name[:1]|upper }}</div><h3>{{ c.name }}</h3>
+<div>{% for p in c.products %}<span class="tag {{ p }}">{{ p }}</span> {% endfor %}{% if not c.products %}<span class="muted small-text">no reports yet</span>{% endif %}</div>
+<div class="meta"><span>{{ c.count }} report{{ 's' if c.count != 1 }}</span><span>{{ ('last: ' ~ c.last_quarter) if c.last_quarter }}</span></div></a>
+{% endfor %}</div>
+{% else %}<div class="card empty"><b>{{ 'No client matches "' ~ q ~ '"' if q else 'No clients yet' }}</b><a href="/new">Create a report</a> &ndash; the client folder is made for you.</div>{% endif %}
+{% endblock %}

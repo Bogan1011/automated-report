@@ -1,11 +1,17 @@
-{% extends "base.html" %}{% set active='new' %}{% block body %}
-<h1>New health check &ndash; {{ info[short].name }}</h1><p class="sub">Fill in the details, attach the evidence, and the report and presentation are built on this server.</p>
+{% extends "base.html" %}
+{% block crumbs %}{% if client %}<a href="/clients">Clients</a><span>/</span><a href="/clients/{{ client|urlencode }}">{{ form.client_name or client }}</a><span>/</span>{% endif %}New report{% endblock %}
+{% block body %}
+<div class="head"><div><h1>New {{ short }} report</h1><p class="sub">{{ info[short].name }}{% if client %} &middot; details copied from this client's last report{% endif %}. Click <b>Generate report</b> &ndash; it builds on the server and you can move to other pages meanwhile.</p></div>
+<div class="tabs" style="margin:0">{% for k, v in info.items() %}<a class="tab {{ 'on' if k==short }}" href="/new?product={{ k }}{{ ('&client=' ~ client|urlencode) if client }}">{{ k }}</a>{% endfor %}</div></div>
 {% if error %}<p class="msg err">{{ error }}</p>{% endif %}
-<form method="post" action="/new" enctype="multipart/form-data" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Uploading...'">
-<div class="card"><h2>Client details</h2>{% set f = form %}{% include "_details.html" %}</div>
+<form method="post" action="/new" enctype="multipart/form-data" data-upload id="new-form">
+<div class="card"><h2>Client and report details</h2>{% set f = form %}{% include "_details.html" %}</div>
 <div class="card"><h2>Evidence</h2><div class="grid">
 <div class="drop"><label>Screenshots <span class="hint">Word file (.docx) with the console screenshots</span></label><input type="file" name="screenshots_docx" accept=".docx"></div>
 <div class="drop"><label>Logs <span class="hint">{% if short == 'SWP' %}zip with Computers.csv, the policy .xml exports and the IPS / Log Inspection event CSVs{% elif short == 'CECP' %}zip with the detection log export (result.csv) and the monthly report PDF{% else %}zip with the .cmpolicy and CSV exports{% endif %}</span></label><input type="file" name="logs_zip" accept=".zip"></div>
 <div class="drop"><label>Extra exports <span class="hint">optional loose .csv / .cmpolicy / .xml files</span></label><input type="file" name="extra" accept=".csv,.cmpolicy,.xml" multiple></div>
-</div><p class="muted" style="margin:12px 0 0">{% if has_zip_password %}The logs zip is opened with the zip password saved in <a href="/settings">Settings</a>.{% else %}No zip password is saved - set one in <a href="/settings">Settings</a> if your log zips are protected.{% endif %}</p></div>
-<button class="btn">Upload and build report</button></form>{% endblock %}
+</div><p class="muted" style="margin:12px 0 0">{% if has_zip_password %}The logs zip is opened with the zip password saved in <a href="/settings">Settings</a>.{% else %}No zip password is saved &ndash; set one in <a href="/settings">Settings</a> if your log zips are protected.{% endif %}</p></div>
+<div class="card" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap"><button class="btn" style="padding:11px 26px;font-size:15px">Generate report</button>
+<div class="upl" style="flex:1;min-width:260px"><div style="display:flex;justify-content:space-between"><b class="small-text">Uploading evidence</b><span class="small-text muted" data-pct>0%</span></div><div class="bar big"><i></i></div>
+<div class="live-detail">Keep this page open until the upload reaches 100% &ndash; after that the report is generated on the server and you can go anywhere.</div></div></div>
+</form>{% endblock %}
