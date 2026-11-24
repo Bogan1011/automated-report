@@ -34,7 +34,8 @@
 {% if checks %}<div class="card"><h2>Upload check</h2><ul class="checks">{% for c in checks %}<li class="{{ c.split(':')[0] }}">{{ c }}</li>{% endfor %}</ul></div>{% endif %}
 <div class="card"><h2>Actions</h2><div class="actions" style="margin-top:0">
 <form method="post" action="{{ url }}/rebuild"><button class="btn">Generate again</button></form>
-<form method="post" action="{{ url }}/archive" onsubmit="return confirm('Move this report to the archive folder? Files are kept on the server.')"><button class="btn ghost">Archive</button></form></div></div>
+<form method="post" action="{{ url }}/archive" onsubmit="return confirm('Move this report to the archive folder? Files are kept on the server.')"><button class="btn ghost">Archive</button></form>
+<form method="post" action="{{ url }}/delete" data-confirm="Delete the {{ short }} {{ quarter }} report of {{ (prof.client_name or client)|e }} (evidence, Word, PowerPoint)? This cannot be undone." onsubmit="return confirm(this.dataset.confirm)"><button class="btn danger"{% if st.status=='building' %} disabled title="Wait until the build has finished"{% endif %}>{% include "_trash.html" %}Delete</button></form></div></div>
 {% if others %}<div class="card"><h2>Other reports of this client</h2>{% for o in others %}<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><a href="{{ o.url }}"><span class="tag {{ o.short }}">{{ o.short }}</span> {{ o.quarter }}</a><span class="pill {{ o.status }}" style="font-size:11px">{{ 'ready' if o.status=='done' else o.status }}</span></div>{% endfor %}</div>{% endif %}
 </div></div>
 {% endblock %}

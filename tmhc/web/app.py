@@ -35,7 +35,7 @@ from .. import checklist as cl
 from ..engine.evaluate import load_rules
 from ..sources import screenshots
 from ..cli import make_checklist
-from ..watch import (DEFAULT_CONFIG, GO_FILE, _load_state, client_status, find_evidence, iter_clients, iter_jobs,
+from ..watch import (DEFAULT_CONFIG, GO_FILE, _load_state, _save_state, client_status, find_evidence, iter_clients, iter_jobs,
                      job_key, load_config, quarter_of, unique_dir)
 from ..watch import safe_name as watch_safe_name
 
@@ -646,6 +646,42 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         folder.rename(dest_root / f"{job} {dt.datetime.now():%Y%m%d-%H%M%S}")
         from urllib.parse import quote
         return RedirectResponse(f"/clients/{quote(client)}", status_code=303)
+
+    def _forget(inbox: Path, keys: list[str]) -> None:
+        state = _load_state(inbox)
+        if any(k in state for k in keys):
+            for k in keys:
+                state.pop(k, None)
+            _save_state(inbox, state)
+
+    def _busy(folder: Path) -> bool:
+        return (folder / ".building").exists() or any(folder.glob("*/.building"))
+
+    @app.post("/r/{client}/{job}/delete")
+    def delete_report(request: Request, client: str, job: str):
+        c = cfg()
+        folder = _job_dir(c, client, job)
+        if _busy(folder):
+            raise HTTPException(409, "This report is being generated - delete it when the build has finished.")
+        parent = folder.parent
+        shutil.rmtree(folder)
+        _forget(c["inbox"], [f"{parent.name}/{job}"])
+        from urllib.parse import quote
+        if not any(p for p in parent.iterdir() if not p.name.startswith(".")):
+            shutil.rmtree(parent, ignore_errors=True)  # the client's last report: remove the empty folder too
+            return RedirectResponse("/clients", status_code=303)
+        return RedirectResponse(f"/clients/{quote(client)}", status_code=303)
+
+    @app.post("/clients/{client}/delete")
+    def delete_client(client: str):
+        c = cfg()
+        folder = _client_folder(c, client)
+        if _busy(folder):
+            raise HTTPException(409, "A report of this client is being generated - delete it when the build has finished.")
+        keys = [f"{folder.name}/{p.name}" for p in folder.iterdir() if p.is_dir()]
+        shutil.rmtree(folder)
+        _forget(c["inbox"], keys)
+        return RedirectResponse("/clients", status_code=303)
 
     @app.get("/r/{client}/{job}/download/{kind}")
     def download(client: str, job: str, kind: str):

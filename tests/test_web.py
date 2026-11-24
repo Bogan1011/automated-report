@@ -193,3 +193,23 @@ def test_watch_moves_old_single_folder_reports_into_client_folders(tmp_path):
     moved = watch.migrate_loose(cfg, state)
     assert len(moved) == 1 and len(watch.iter_jobs(inbox)) == 2
     assert not (inbox / "Gamma Industries" / "new.zip").exists()
+
+
+def test_delete_report_and_client(site):
+    client, _, inbox = site
+    _login(client)
+    _new(client, "Delta Ltd", quarter="Q3 2026")
+    _new(client, "Delta Ltd", quarter="Q4 2026")
+    r = client.post("/r/Delta%20Ltd/SEP%20Q3%202026/delete", follow_redirects=False)
+    assert r.headers["location"] == "/clients/Delta%20Ltd"
+    assert [p.name for p in (inbox / "Delta Ltd").iterdir() if not p.name.startswith(".")] == ["SEP Q4 2026"]
+    (inbox / "Delta Ltd" / "SEP Q4 2026" / ".building").write_text("x")       # never while it builds
+    assert client.post("/clients/Delta%20Ltd/delete").status_code == 409
+    (inbox / "Delta Ltd" / "SEP Q4 2026" / ".building").unlink()
+    r = client.post("/clients/Delta%20Ltd/delete", follow_redirects=False)
+    assert r.headers["location"] == "/clients" and not (inbox / "Delta Ltd").exists()
+    assert client.post("/clients/..%2F..%2Fetc/delete").status_code == 404
+    # deleting a client's only report removes the empty client folder too
+    _new(client, "Echo Ltd", quarter="Q4 2026")
+    r = client.post("/r/Echo%20Ltd/SEP%20Q4%202026/delete", follow_redirects=False)
+    assert r.headers["location"] == "/clients" and not (inbox / "Echo Ltd").exists()
